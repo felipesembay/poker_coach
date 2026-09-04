@@ -4,6 +4,7 @@
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -12,12 +13,16 @@ env/
 venv/
 ENV/
 .venv/
+**/.venv/
+poker_coach/.venv/
 *.db
 *.sqlite3
 
 # Node
 node_modules/
+**/node_modules/
 dist/
+**/dist/
 build/
 .output/
 .tanstack/
@@ -27,4 +32,3 @@ build/
 # Environment variables
 .env
 .env*.local
-poker_coach/.venv
