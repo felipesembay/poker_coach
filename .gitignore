@@ -1,0 +1,29 @@
+.claude
+.vscode
+.idea
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+build/
+.output/
+.tanstack/
+.nitro/
+*.log
+
+# Environment variables
+.env
+.env*.local

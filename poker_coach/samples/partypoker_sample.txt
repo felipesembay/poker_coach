@@ -1,0 +1,75 @@
+***** Hand History For Game 17801119293899665mun14ke *****
+30000/60000 Tourney Texas Holdem Game Table (NL) (MTT Tournament #420849778) (Buyin $0.0 + $0.0) - Fri May 29 23:31:41 EDT 2026
+Table (420849778) Table #17 (Real Money) -- Seat 3 is the button
+Total number of players : 6/6
+Seat 1: Player1 (17666)
+Seat 2: Player2 (329102)
+Seat 3: Player3 (3100907)
+Seat 4: Player6 (1264090)
+Seat 5: Player4 (93952)
+Seat 6: Hero (899196)
+Player1 posts ante (7500)
+Player2 posts ante (7500)
+Player3 posts ante (7500)
+Player4 posts ante (7500)
+Hero posts ante (7500)
+Player4 posts small blind (30000)
+Hero posts big blind (60000)
+** Dealing down cards **
+Dealt to Hero [ Kh, 2h ]
+Player1 folds 
+Player2 calls (60000)
+Player3 calls (60000)
+Player4 calls (30000)
+Hero raises 831696 to 891696
+Hero is all-In.
+Player2 folds 
+Player3 calls (831696)
+Player4 calls (26452)
+Player4 is all-In.
+Creating Main Pot with  356856 with Player4
+Creating Side Pot 1 with 1610488 with Hero
+** Dealing Flop ** :  [ 5c, Td, 9d ]
+** Dealing Turn ** :  [ 7d ]
+** Dealing River ** :  [ 7h ]
+** Summary **
+Main Pot: 356856 Side Pot 1: 1610488 
+Board: [ 5c, Td, 9d, 7d, 7h ]
+Player1 balance 10166, lost 7500 (folded)
+Player2 balance 261602, lost 67500 (folded)
+Player3 balance 4169055, bet 899196, collected 1967344, net +1068148[ 8h, 6c ] [ a straight, six to ten -- Td,9d,8h,7d,6c ]
+Player6 balance 1264090, sits out
+Player4 balance 0, lost 93952[ 4c, Tc ] [ two pairs, tens and sevens -- Tc,Td,9d,7d,7h ]
+Hero balance 0, lost 899196[ Kh, 2h ] [ a pair of sevens -- Kh,Td,9d,7d,7h ]
+
+
+***** Hand History For Game 17801118972836rtktes4ukf *****
+30000/60000 Tourney Texas Holdem Game Table (NL) (MTT Tournament #420849778) (Buyin $0.0 + $0.0) - Fri May 29 23:31:11 EDT 2026
+Table (420849778) Table #17 (Real Money) -- Seat 2 is the button
+Total number of players : 4/6
+Seat 2: Player1 (336602)
+Seat 3: Player2 (2958407)
+Seat 5: Player3 (221452)
+Seat 6: Hero (906696)
+Player1 posts ante (7500)
+Player2 posts ante (7500)
+Player3 posts ante (7500)
+Hero posts ante (7500)
+Player2 posts small blind (30000)
+Player3 posts big blind (60000)
+** Dealing down cards **
+Dealt to Hero [ 2h, Kh ]
+Hero folds 
+Player1 folds 
+Player2 raises 90000 to 120000
+Player3 calls (60000)
+** Dealing Flop ** :  [ Qc, 7h, Jh ]
+Player2 bets (510000)
+Player3 folds 
+** Summary **
+Main Pot: 270000 
+Board: [ Qc, 7h, Jh ]
+Player1 balance 329102, lost 7500 (folded)
+Player2 balance 3100907, bet 637500, collected 780000, net +142500
+Player3 balance 93952, lost 127500 (folded)
+Hero balance 899196, lost 7500 (folded)
