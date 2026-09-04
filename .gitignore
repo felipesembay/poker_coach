@@ -27,3 +27,4 @@ build/
 # Environment variables
 .env
 .env*.local
+poker_coach/.venv
