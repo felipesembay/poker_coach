@@ -115,6 +115,18 @@ def range_grid(effective_bb: float = Query(10.0, gt=0), pot_bb: float = Query(1.
                          shove_pct=result.shove_pct, call_pct=result.call_pct, grid=grid)
 
 
+@router.get("/call-grid", response_model=RangeGridOut)
+def call_grid(effective_bb: float = Query(10.0, gt=0), pot_bb: float = Query(1.5, gt=0)):
+    """Espelho de /range-grid pro lado de quem PAGA um all-in (mode
+    'facing_shove' do treinador): EV de cada classe pagando a range de
+    shove de equilíbrio do vilão nesse stack/pot. `shove_pct`/`call_pct`
+    no retorno continuam sendo os do vilão (pra manter o mesmo shape do
+    /range-grid); o grid em si é que muda de EV do push pra EV do call."""
+    grid, result = nash.call_ev_grid(effective_bb, pot_bb)
+    return RangeGridOut(effective_bb=effective_bb, pot_bb=pot_bb,
+                         shove_pct=result.shove_pct, call_pct=result.call_pct, grid=grid)
+
+
 # ---------------- Treinador (Modo Estudo) ----------------
 
 class TrainerSeatOut(BaseModel):
@@ -133,11 +145,12 @@ class TrainerQuestionOut(BaseModel):
     effective_bb: float
     pot_bb: float
     n_players: int
+    bb: int  # tamanho do big blind (chips) — pra desenhar o stack de cada assento em BB
     seats: list[TrainerSeatOut]
     context: str  # texto templado
 
 
-def _seats_for_hand(conn, site: str, hand_id: str, hero: str) -> tuple[list[TrainerSeatOut], int]:
+def _seats_for_hand(conn, site: str, hand_id: str, hero: str) -> tuple[list[TrainerSeatOut], int, int]:
     """Assentos (só posição/stack, pra desenhar a mesa) — reusa
     Hand.position_order() com um Hand "stub" (mesmo padrão de
     pushfold/analyze.py e icm_analyze.py)."""
@@ -152,7 +165,7 @@ def _seats_for_hand(conn, site: str, hand_id: str, hero: str) -> tuple[list[Trai
     order = stub.position_order() or []
     out = [TrainerSeatOut(position=label, is_hero=(seat.player == hero), stack=seat.stack)
            for label, seat in order]
-    return out, len(seats)
+    return out, len(seats), bb
 
 
 @router.get("/trainer/next", response_model=TrainerQuestionOut)
@@ -182,25 +195,25 @@ def trainer_next(
             if mode == "open":
                 row = pf.analyze_hand_row(conn, site, hand_id, precise=False)
                 if row is not None:
-                    seats, np_ = _seats_for_hand(conn, site, hand_id, hero)
+                    seats, np_, bb = _seats_for_hand(conn, site, hand_id, hero)
                     return TrainerQuestionOut(
                         site=row.site, hand_id=row.hand_id, mode="open",
                         hero_cards=row.hero_cards,
                         position=row.position, effective_bb=row.effective_bb, pot_bb=row.pot_bb,
-                        n_players=np_, seats=seats,
+                        n_players=np_, bb=bb, seats=seats,
                         context=f"Ninguém entrou no pote ainda. Você é {row.position} "
                                 f"com {row.effective_bb} BB efetivos.",
                     )
             else:
                 frow = pf.analyze_facing_shove_hand_row(conn, site, hand_id, precise=False)
                 if frow is not None:
-                    seats, np_ = _seats_for_hand(conn, site, hand_id, hero)
+                    seats, np_, bb = _seats_for_hand(conn, site, hand_id, hero)
                     return TrainerQuestionOut(
                         site=frow.site, hand_id=frow.hand_id, mode="facing_shove",
                         hero_cards=frow.hero_cards, position=frow.position,
                         shover_position=frow.shover_position,
                         effective_bb=frow.effective_bb, pot_bb=frow.pot_bb,
-                        n_players=np_, seats=seats,
+                        n_players=np_, bb=bb, seats=seats,
                         context=f"{frow.shover_position} deu all-in antes de você agir. "
                                 f"Você é {frow.position} com {frow.effective_bb} BB efetivos.",
                     )

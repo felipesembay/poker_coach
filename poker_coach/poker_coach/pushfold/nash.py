@@ -153,3 +153,27 @@ def ev_grid(effective_bb: float, pot_bb: float, ranking: list[str] | None = None
         grid[cls] = (1 - p_call) * pot_bb + p_call * (
             equity_vs_range * (pot_bb + 2 * effective_bb) - effective_bb)
     return grid, result
+
+
+def call_ev_grid(effective_bb: float, pot_bb: float, ranking: list[str] | None = None,
+                  matrix: dict[str, float] | None = None,
+                  result: NashResult | None = None) -> tuple[dict[str, float], NashResult]:
+    """Espelho de `ev_grid`, só que do lado de quem PAGA um all-in já na
+    mesa (o outro lado do mesmo equilíbrio, ver analyze.analyze_facing_
+    shove_hand_row): EV de CADA classe pagando o shove de equilíbrio do
+    vilão. Sem fold equity aqui — quem decide é o herói, não tem "o vilão
+    desiste" (o vilão já empurrou); por isso a fórmula não tem o termo
+    (1-p)*pot do ev_grid, só a equity direta contra a range de shove.
+    """
+    if ranking is None:
+        ranking = eq.build_ranking()
+    if matrix is None:
+        matrix = eq.build_class_matrix()
+    if result is None:
+        result = solve(effective_bb, pot_bb, ranking, matrix)
+
+    grid = {}
+    for cls in ranking:
+        equity_vs_range = eq.equity_class_vs_range(cls, result.shove_classes, matrix)
+        grid[cls] = equity_vs_range * (pot_bb + 2 * effective_bb) - effective_bb
+    return grid, result

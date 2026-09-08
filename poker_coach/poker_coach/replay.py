@@ -63,6 +63,62 @@ class ReplayHand:
         s = self.steps[step_index]
         return s.pot_after, s.stacks_after, s.board_so_far
 
+    def preflop_reference_spot(self) -> tuple[float, float] | None:
+        """(effective_bb, pot_bb) no instante bem antes da PRIMEIRA decisão
+        real do herói no preflop (post_sb/post_bb/post_ante não contam) —
+        pra alimentar o heatmap ilustrativo do Replayer independente da
+        mão ser abertura, facing-shove, limpada, 3-bet, multiway etc.
+
+        Não julga certo/errado (isso continua restrito ao escopo estrito
+        de pushfold.analyze — ver analyze_hand_row/analyze_facing_shove_
+        hand_row); só responde "dado esse stack/pot, o que o heatmap de
+        push diria" como referência, mesmo quando o herói nem chegou a
+        considerar all-in de verdade.
+
+        effective_bb = stack do PRÓPRIO herói (não min(herói, vilão) como
+        no motor estrito de heads-up all-in) — de propósito: numa mesa
+        multiway/limpada é comum ALGUM jogador já estar quase all-in só
+        de pagar blind+ante (ex. SB com 1 BB restante antes mesmo de
+        agir), o que faria min(herói, vilão) desabar pra quase zero e
+        esconder o heatmap sem motivo — o herói claramente não está
+        "efetivamente raso" só porque um jogador aleatório na mesa está.
+        Aqui é referência ("dado MEU stack, o que valeria empurrar"), não
+        o EV exato de uma confrontação específica. None se não der pra
+        calcular (sem herói, sem oponente ativo, ou stack zerado)."""
+        if not self.hero or not self.bb:
+            return None
+
+        hero_idx = None
+        for i, s in enumerate(self.steps):
+            if s.street != "preflop":
+                break
+            if s.player == self.hero and s.action not in ("post_sb", "post_bb", "post_ante"):
+                hero_idx = i
+                break
+        if hero_idx is None:
+            return None
+
+        if hero_idx > 0:
+            pot_before = self.steps[hero_idx - 1].pot_after
+            stacks_before = self.steps[hero_idx - 1].stacks_after
+        else:
+            pot_before = 0
+            stacks_before = self.starting_stacks()
+
+        folded = {s.player for s in self.steps[:hero_idx] if s.action == "fold"}
+        active_others = [p for p in stacks_before if p != self.hero and p not in folded]
+        if not active_others:
+            return None
+
+        hero_stack = stacks_before.get(self.hero)
+        if not hero_stack or hero_stack <= 0:
+            return None
+
+        effective_bb = hero_stack / self.bb
+        if effective_bb <= 1:
+            return None
+        return effective_bb, pot_before / self.bb
+
 
 def load(conn: sqlite3.Connection, site: str, hand_id: str) -> ReplayHand | None:
     row = conn.execute(
@@ -243,14 +299,20 @@ def list_hands(conn: sqlite3.Connection, *, site: str | None = None,
         )
         params += [like, like, like, like, like]
 
-    sql = f"""SELECT h.site, h.hand_id, h.tournament_id, COALESCE(t.name, h.tournament_id),
-                     t.buyin, h.ts, h.hero_position, h.hero_cards, h.hero_stack_bb,
-                     h.hero_net_chips, h.bb, h.favorite, h.board, h.n_players,
-                     {sd_expr} AS showdown, {ai_expr} AS all_in
-              FROM hands h LEFT JOIN tournaments t
-                ON t.site = h.site AND t.tournament_id = h.tournament_id
-              WHERE {' AND '.join(where)}
-              ORDER BY h.ts DESC LIMIT ?"""
+    # Seleciona as `limit` mãos mais recentes (ORDER BY ts DESC ... LIMIT),
+    # mas devolve em ordem cronológica crescente (ts ASC) — a sequência
+    # real de jogo dentro de um torneio, pra o Replayer não mostrar a
+    # última mão do torneio primeiro.
+    sql = f"""SELECT * FROM (
+                SELECT h.site, h.hand_id, h.tournament_id, COALESCE(t.name, h.tournament_id) AS tname,
+                       t.buyin, h.ts, h.hero_position, h.hero_cards, h.hero_stack_bb,
+                       h.hero_net_chips, h.bb, h.favorite, h.board, h.n_players,
+                       {sd_expr} AS showdown, {ai_expr} AS all_in
+                FROM hands h LEFT JOIN tournaments t
+                  ON t.site = h.site AND t.tournament_id = h.tournament_id
+                WHERE {' AND '.join(where)}
+                ORDER BY h.ts DESC LIMIT ?
+              ) recent ORDER BY ts ASC"""
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     return [{

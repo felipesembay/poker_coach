@@ -65,6 +65,8 @@ export const pushfoldApi = {
     request<PushFoldSummary>(`/api/pushfold/summary${qs(params)}`),
   rangeGrid: (params: { effective_bb: number; pot_bb: number }) =>
     request<RangeGrid>(`/api/pushfold/range-grid${qs(params)}`),
+  callGrid: (params: { effective_bb: number; pot_bb: number }) =>
+    request<RangeGrid>(`/api/pushfold/call-grid${qs(params)}`),
 };
 
 // ---------------- Treinador ----------------
@@ -83,6 +85,7 @@ export type TrainerQuestion = {
   effective_bb: number;
   pot_bb: number;
   n_players: number;
+  bb: number;
   seats: TrainerSeat[];
   context: string;
 };
@@ -221,10 +224,14 @@ export type ReplayStep = {
 export type PainelIa = {
   in_scope: boolean;
   reason?: string | null;
+  spot_kind?: "open" | "facing_shove" | null;
+  shover_position?: string | null;
   hero_decision?: string | null;
   nash_decision?: string | null;
   ev_push_bb?: number | null;
   ev_lost_bb?: number | null;
+  effective_bb?: number | null;
+  pot_bb?: number | null;
 };
 
 export type ReplayHand = {

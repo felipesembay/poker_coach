@@ -33,15 +33,24 @@ export function PokerTable({
   pot,
   cardSize = "lg",
   seatCardSize = "sm",
+  bb,
 }: {
   seats: TableSeat[];
   board?: string[];
   pot?: number;
   cardSize?: "sm" | "md" | "lg" | "xl" | "2xl";
   seatCardSize?: "sm" | "md" | "lg" | "xl" | "2xl";
+  /** Tamanho do big blind (chips) — quando informado, o stack de cada
+   * assento é exibido em BB (ex. "19.9 BB") em vez de fichas cruas, que é
+   * como se pensa jogando torneio. O pot no centro continua em fichas
+   * (junto do contexto de blind/ante que só faz sentido em valor absoluto). */
+  bb?: number;
 }) {
   const angles = seatAngles(seats);
-  const seatBoxWidth = seatCardSize === "sm" ? 124 : seatCardSize === "md" ? 150 : 220;
+  // Só o texto (nome/posição/stack/ação) mora nessa largura agora — as
+  // cartas saíram do quadro e flutuam fora dele (ver abaixo), então não
+  // precisa mais ser larga o bastante pra caber as 2 cartas lado a lado.
+  const seatBoxWidth = seatCardSize === "sm" ? 100 : seatCardSize === "md" ? 118 : 158;
 
   return (
     <div className="grid-lines relative aspect-[16/10] w-full overflow-hidden rounded-lg p-6">
@@ -65,14 +74,18 @@ export function PokerTable({
 
       {seats.map((s, i) => {
         const rad = (angles[i]! * Math.PI) / 180;
+        // Cartas ficam FORA do quadro de info, do lado de fora da mesa
+        // (longe do centro) — pra não empilhar em cima do nome/stack nem
+        // encostar no board. Assentos na metade de cima da oval (sin<0)
+        // têm as cartas acima do quadro; embaixo (incl. Hero, sempre
+        // embaixo), as cartas ficam abaixo.
+        const cardsAboveBox = Math.sin(rad) < 0;
         return (
           <div
             key={s.key}
             className={cn(
-              "absolute -translate-x-1/2 -translate-y-1/2 rounded-md border p-2 backdrop-blur-sm transition-colors",
-              s.isHero
-                ? "border-primary/60 bg-primary/12 shadow-[0_0_0_1px_var(--primary)]"
-                : "border-border bg-card/85",
+              "absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5",
+              cardsAboveBox && "flex-col-reverse",
             )}
             style={{
               left: `${50 + 39 * Math.cos(rad)}%`,
@@ -80,42 +93,47 @@ export function PokerTable({
               width: seatBoxWidth,
             }}
           >
-            <div className="flex min-w-0 items-center justify-between gap-1">
-              <span
-                className={cn("truncate text-[11px] font-semibold", s.isHero && "text-primary")}
-              >
-                {s.label}
-              </span>
-              {s.position && (
-                <span className="num shrink-0 rounded bg-secondary px-1 text-[9px] font-medium">
-                  {s.position}
+            <div
+              className={cn(
+                "w-full rounded-md border p-2 backdrop-blur-sm transition-colors",
+                s.isHero
+                  ? "border-primary/60 bg-primary/12 shadow-[0_0_0_1px_var(--primary)]"
+                  : "border-border bg-card/85",
+              )}
+            >
+              <div className="flex min-w-0 items-center justify-between gap-1">
+                <span
+                  className={cn("truncate text-[11px] font-semibold", s.isHero && "text-primary")}
+                >
+                  {s.label}
                 </span>
+                {s.position && (
+                  <span className="num shrink-0 rounded bg-secondary px-1 text-[9px] font-medium">
+                    {s.position}
+                  </span>
+                )}
+              </div>
+              {s.stack != null && (
+                <p className="num text-[11px] text-muted-foreground">
+                  {bb ? `${(s.stack / bb).toFixed(1)} BB` : s.stack.toLocaleString("pt-BR")}
+                </p>
+              )}
+              {s.actionText && (
+                <p
+                  className={cn(
+                    "num truncate text-[10px]",
+                    s.actionTone === "allin"
+                      ? "text-loss"
+                      : s.actionTone === "fold"
+                        ? "text-muted-foreground/60"
+                        : "text-profit",
+                  )}
+                >
+                  {s.actionText}
+                </p>
               )}
             </div>
-            {s.stack != null && (
-              <p className="num text-[11px] text-muted-foreground">
-                {s.stack.toLocaleString("pt-BR")}
-              </p>
-            )}
-            {s.actionText && (
-              <p
-                className={cn(
-                  "num truncate text-[10px]",
-                  s.actionTone === "allin"
-                    ? "text-loss"
-                    : s.actionTone === "fold"
-                      ? "text-muted-foreground/60"
-                      : "text-profit",
-                )}
-              >
-                {s.actionText}
-              </p>
-            )}
-            {s.cards && s.cards.length >= 2 ? (
-              <div className="mt-1.5">
-                <Hole cards={s.cards} size={seatCardSize} />
-              </div>
-            ) : null}
+            {s.cards && s.cards.length >= 2 ? <Hole cards={s.cards} size={seatCardSize} /> : null}
           </div>
         );
       })}

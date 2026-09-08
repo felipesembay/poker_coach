@@ -87,10 +87,18 @@ class StepOut(BaseModel):
 class PainelIaOut(BaseModel):
     in_scope: bool
     reason: str | None = None
+    # "open": herói decide empurrar (abertura preflop). "facing_shove":
+    # um vilão já deu all-in e o herói decide pagar. Cada um usa uma
+    # range/heatmap diferente (push EV vs call EV) — ver /api/pushfold/
+    # range-grid e /call-grid.
+    spot_kind: str | None = None
+    shover_position: str | None = None  # só em spot_kind="facing_shove"
     hero_decision: str | None = None
     nash_decision: str | None = None
     ev_push_bb: float | None = None
     ev_lost_bb: float | None = None
+    effective_bb: float | None = None
+    pot_bb: float | None = None
 
 
 class ReplayHandOut(BaseModel):
@@ -138,19 +146,43 @@ def get_hand(site: str, hand_id: str):
         ]
 
         ia_row = pf.analyze_hand_row(conn, site, hand_id, precise=True)
-        if ia_row is None:
+        if ia_row is not None:
             painel = PainelIaOut(
-                in_scope=False,
-                reason="Fora do escopo do motor (só cobre a decisão de abrir o pote "
-                       "preflop, primeiro a agir). Sem motor pós-flop/ICM/3bet ainda "
-                       "nesse painel — ICM tem endpoint próprio em /api/icm.",
+                in_scope=True, spot_kind="open", hero_decision=ia_row.hero_decision,
+                nash_decision=ia_row.nash_decision, ev_push_bb=ia_row.ev_push_bb,
+                ev_lost_bb=ia_row.ev_lost_bb, effective_bb=ia_row.effective_bb,
+                pot_bb=ia_row.pot_bb,
             )
         else:
-            painel = PainelIaOut(
-                in_scope=True, hero_decision=ia_row.hero_decision,
-                nash_decision=ia_row.nash_decision, ev_push_bb=ia_row.ev_push_bb,
-                ev_lost_bb=ia_row.ev_lost_bb,
-            )
+            # Não é abertura — tenta o outro lado que o motor cobre: herói
+            # decidindo pagar um all-in que já estava na mesa. Mesmo grid
+            # de range (ver /api/pushfold/call-grid), formato espelhado.
+            frow = pf.analyze_facing_shove_hand_row(conn, site, hand_id, precise=True)
+            if frow is not None:
+                painel = PainelIaOut(
+                    in_scope=True, spot_kind="facing_shove",
+                    shover_position=frow.shover_position,
+                    hero_decision=frow.hero_decision, nash_decision=frow.nash_decision,
+                    ev_push_bb=frow.ev_call_bb, ev_lost_bb=frow.ev_lost_bb,
+                    effective_bb=frow.effective_bb, pot_bb=frow.pot_bb,
+                )
+            else:
+                # Não dá pra JULGAR a decisão do herói aqui (limpou, pagou
+                # raise, 3-bet, multiway etc. — fora do que analyze.py
+                # cobre), mas o heatmap de push ainda é uma referência
+                # útil ("dado esse stack/pot, o que seria +EV empurrar")
+                # mesmo sem decisão real pra comparar. Ver docstring de
+                # preflop_reference_spot.
+                ref = rh.preflop_reference_spot()
+                painel = PainelIaOut(
+                    in_scope=False, spot_kind="reference" if ref else None,
+                    effective_bb=ref[0] if ref else None, pot_bb=ref[1] if ref else None,
+                    reason="Fora do escopo do motor pra JULGAR a decisão (só cobre "
+                           "abertura preflop e pagar um all-in que já estava na mesa, "
+                           "ambos sem ninguém pelo meio — sem 3bet/squeeze/multiway/"
+                           "pós-flop ainda). O mapa de mãos abaixo é referência do "
+                           "push nesse stack/pot, não uma nota da jogada real.",
+                )
 
         return ReplayHandOut(
             site=rh.site, hand_id=rh.hand_id, tournament_id=rh.tournament_id,

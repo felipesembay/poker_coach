@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Gauge,
@@ -17,6 +18,7 @@ import { z } from "zod";
 
 import { Hole, Money, PageHeader, Panel } from "@/components/lab";
 import { PokerTable, type TableSeat } from "@/components/poker-table";
+import { RangeGridPanel } from "@/components/range-grid";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -149,6 +151,9 @@ function Replayer() {
   const [noteSaved, setNoteSaved] = useState(false);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [qInput, setQInput] = useState("");
+  // Análise (IA + ICM) fica recolhida por padrão — texto grande que só
+  // interessa sob demanda, não deve encolher a mesa/heatmap o tempo todo.
+  const [analysisOpen, setAnalysisOpen] = useState(false);
 
   // Busca livre com debounce simples pra não refazer a query a cada tecla
   useEffect(() => {
@@ -279,103 +284,104 @@ function Replayer() {
     filters.bbRange[1] !== 100,
   );
 
-  // ---- Painel de filtros + mãos filtradas (sempre visível) ----
-  const filtersPanel = (
-    <div className="space-y-4">
-      <Panel title="Filtros" subtitle="Encontre o spot exato">
-        <div className="space-y-3 p-4">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={qInput}
-              onChange={(e) => setQInput(e.target.value)}
-              placeholder="ID, cartas, board, notas, tags…"
-              className="h-9 pl-8 pr-8 text-sm"
-            />
-            {qInput && (
-              <button
-                type="button"
-                onClick={() => setQInput("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Limpar busca"
-              >
-                <X className="size-3.5" />
-              </button>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground">Torneio</label>
-            <Select
-              value={filters.tournamentKey || "__all"}
-              onValueChange={(v) =>
-                setFilters((f) => ({ ...f, tournamentKey: v === "__all" ? "" : v }))
-              }
+  // ---- Barra de filtros — horizontal, no topo da página (não mais uma
+  // coluna vertical fixa consumindo largura o tempo todo). ----
+  const filterBar = (
+    <Panel>
+      <div className="flex flex-wrap items-end gap-2.5 p-3">
+        <div className="relative w-full sm:w-44">
+          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+            placeholder="ID, cartas, board, notas…"
+            className="h-8 pl-8 pr-8 text-xs"
+          />
+          {qInput && (
+            <button
+              type="button"
+              onClick={() => setQInput("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Limpar busca"
             >
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all" className="text-xs">
-                  Todos
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="w-36 space-y-1">
+          <label className="text-[10px] text-muted-foreground">Torneio</label>
+          <Select
+            value={filters.tournamentKey || "__all"}
+            onValueChange={(v) =>
+              setFilters((f) => ({ ...f, tournamentKey: v === "__all" ? "" : v }))
+            }
+          >
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all" className="text-xs">
+                Todos
+              </SelectItem>
+              {(tournamentsQ.data ?? []).map((t) => (
+                <SelectItem
+                  key={`${t.site}::${t.tournament_id}`}
+                  value={`${t.site}::${t.tournament_id}`}
+                  className="text-xs"
+                >
+                  {t.name ?? `${t.site} #${t.tournament_id}`}
                 </SelectItem>
-                {(tournamentsQ.data ?? []).map((t) => (
-                  <SelectItem
-                    key={`${t.site}::${t.tournament_id}`}
-                    value={`${t.site}::${t.tournament_id}`}
-                    className="text-xs"
-                  >
-                    {t.name ?? `${t.site} #${t.tournament_id}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <FilterSelect
-              label="Posição"
-              value={filters.position || "Todas"}
-              options={["Todas", ...POSITIONS]}
-              onChange={(v) => setFilters((f) => ({ ...f, position: v === "Todas" ? "" : v }))}
-            />
-            <FilterSelect
-              label="Jogadores"
-              value={filters.nPlayers || "Todos"}
-              options={["Todos", ...PLAYER_COUNTS]}
-              onChange={(v) => setFilters((f) => ({ ...f, nPlayers: v === "Todos" ? "" : v }))}
-            />
-            <FilterSelect
-              label="Resultado"
-              value={filters.result}
-              options={["Todos", "Ganhou", "Perdeu"]}
-              onChange={(v) => setFilters((f) => ({ ...f, result: v as Filters["result"] }))}
-            />
-            <FilterSelect
-              label="Showdown"
-              value={filters.showdown}
-              options={[...TRI]}
-              onChange={(v) => setFilters((f) => ({ ...f, showdown: v as Tri }))}
-            />
-            <FilterSelect
-              label="All-in"
-              value={filters.allIn}
-              options={[...TRI]}
-              onChange={(v) => setFilters((f) => ({ ...f, allIn: v as Tri }))}
-            />
-            <FilterSelect
-              label="Favoritos"
-              value={filters.favorite}
-              options={[...TRI]}
-              onChange={(v) => setFilters((f) => ({ ...f, favorite: v as Tri }))}
-            />
-          </div>
+        <FilterSelect
+          label="Posição"
+          value={filters.position || "Todas"}
+          options={["Todas", ...POSITIONS]}
+          onChange={(v) => setFilters((f) => ({ ...f, position: v === "Todas" ? "" : v }))}
+        />
+        <FilterSelect
+          label="Jogadores"
+          value={filters.nPlayers || "Todos"}
+          options={["Todos", ...PLAYER_COUNTS]}
+          onChange={(v) => setFilters((f) => ({ ...f, nPlayers: v === "Todos" ? "" : v }))}
+        />
+        <FilterSelect
+          label="Resultado"
+          value={filters.result}
+          options={["Todos", "Ganhou", "Perdeu"]}
+          onChange={(v) => setFilters((f) => ({ ...f, result: v as Filters["result"] }))}
+        />
+        <FilterSelect
+          label="Showdown"
+          value={filters.showdown}
+          options={[...TRI]}
+          onChange={(v) => setFilters((f) => ({ ...f, showdown: v as Tri }))}
+        />
+        <FilterSelect
+          label="All-in"
+          value={filters.allIn}
+          options={[...TRI]}
+          onChange={(v) => setFilters((f) => ({ ...f, allIn: v as Tri }))}
+        />
+        <FilterSelect
+          label="Favoritos"
+          value={filters.favorite}
+          options={[...TRI]}
+          onChange={(v) => setFilters((f) => ({ ...f, favorite: v as Tri }))}
+        />
 
-          <div className="space-y-1.5 pt-1">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Stack mínimo</span>
-              <span className="num">{filters.bbRange[0]} BB</span>
-            </div>
+        <div className="w-44 space-y-1">
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>Stack</span>
+            <span className="num">
+              {filters.bbRange[0]}–{filters.bbRange[1]} BB
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
             <Slider
               min={0}
               max={100}
@@ -386,12 +392,6 @@ function Replayer() {
                 setFilters((f) => ({ ...f, bbRange: [Math.min(val, f.bbRange[1]), f.bbRange[1]] }));
               }}
             />
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Stack máximo</span>
-              <span className="num">{filters.bbRange[1]} BB</span>
-            </div>
             <Slider
               min={0}
               max={100}
@@ -403,75 +403,75 @@ function Replayer() {
               }}
             />
           </div>
-
-          {hasFilters && (
-            <Button variant="outline" size="sm" className="w-full" onClick={clearFilters}>
-              Limpar filtros
-            </Button>
-          )}
         </div>
-      </Panel>
 
-      <Panel
-        title="Mãos filtradas"
-        subtitle={`${hands.length} mão${hands.length === 1 ? "" : "s"} encontrada${hands.length === 1 ? "" : "s"}`}
-      >
-        {listQ.isLoading && (
-          <p className="p-6 text-center text-sm text-muted-foreground">Carregando…</p>
+        {hasFilters && (
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={clearFilters}>
+            Limpar filtros
+          </Button>
         )}
-        {!listQ.isLoading && hands.length === 0 && (
-          <p className="p-6 text-center text-sm text-muted-foreground">Nenhuma mão encontrada.</p>
-        )}
-        <div className="max-h-[560px] divide-y divide-border overflow-y-auto">
-          {hands.map((h: HandSummary) => {
-            const active = h.site === site && h.hand_id === handId;
-            return (
-              <button
-                key={`${h.site}-${h.hand_id}`}
-                type="button"
-                onClick={() => openHand(h)}
-                className={cn(
-                  "block w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/40",
-                  active && "bg-primary/10",
+      </div>
+    </Panel>
+  );
+
+  // ---- Lista de mãos filtradas — coluna estreita, sempre visível, usada
+  // pra "mão anterior"/"próxima mão" percorrer o torneio/sessão inteiro. ----
+  const handsListPanel = (
+    <Panel title="Mãos" subtitle={`${hands.length} encontrada${hands.length === 1 ? "" : "s"}`}>
+      {listQ.isLoading && (
+        <p className="p-6 text-center text-sm text-muted-foreground">Carregando…</p>
+      )}
+      {!listQ.isLoading && hands.length === 0 && (
+        <p className="p-6 text-center text-sm text-muted-foreground">Nenhuma mão encontrada.</p>
+      )}
+      <div className="max-h-[calc(100vh-260px)] divide-y divide-border overflow-y-auto">
+        {hands.map((h: HandSummary) => {
+          const active = h.site === site && h.hand_id === handId;
+          return (
+            <button
+              key={`${h.site}-${h.hand_id}`}
+              type="button"
+              onClick={() => openHand(h)}
+              className={cn(
+                "block w-full px-3 py-2 text-left transition-colors hover:bg-accent/40",
+                active && "bg-primary/10",
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="num text-[11px] text-muted-foreground">
+                  #{h.hand_id.slice(-6)}
+                </span>
+                <Money value={h.net_bb} suffix=" BB" />
+              </div>
+              <div className="mt-1 flex items-center gap-1.5">
+                {h.hero_cards ? <Hole cards={h.hero_cards.split(" ")} size="sm" /> : null}
+                {h.position && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {h.position}
+                  </Badge>
                 )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="num text-xs text-muted-foreground">#{h.hand_id.slice(-8)}</span>
-                  <Money value={h.net_bb} suffix=" BB" />
-                </div>
-                <div className="mt-1 flex items-center gap-2">
-                  {h.hero_cards ? <Hole cards={h.hero_cards.split(" ")} size="sm" /> : null}
-                  {h.position && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {h.position}
-                    </Badge>
-                  )}
-                  <span className="num text-[11px] text-muted-foreground">
-                    {h.stack_bb != null ? `${h.stack_bb} BB` : "—"}
-                  </span>
-                </div>
-                <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                  {h.tournament_name ?? h.tournament_id}
-                  {h.ts ? ` · ${new Date(h.ts).toLocaleDateString("pt-BR")}` : ""}
-                </p>
-              </button>
-            );
-          })}
-        </div>
-      </Panel>
-    </div>
+                <span className="num text-[10px] text-muted-foreground">
+                  {h.stack_bb != null ? `${h.stack_bb} BB` : "—"}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </Panel>
   );
 
   // ---- VIEW: sem mão selecionada ----
   if (!site || !handId) {
     return (
-      <div className="space-y-5">
+      <div className="space-y-4">
         <PageHeader
           title="Replayer"
           description={`${hands.length} mão${hands.length === 1 ? "" : "s"} filtrada${hands.length === 1 ? "" : "s"} · selecione uma para rever passo a passo`}
         />
-        <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-          {filtersPanel}
+        {filterBar}
+        <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+          {handsListPanel}
           <Panel>
             <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
               Selecione uma mão na lista à esquerda para começar.
@@ -485,10 +485,13 @@ function Replayer() {
   // ---- VIEW: carregando ----
   if (handQ.isLoading) {
     return (
-      <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-        {filtersPanel}
-        <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-          Carregando mão…
+      <div className="space-y-4">
+        {filterBar}
+        <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+          {handsListPanel}
+          <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
+            Carregando mão…
+          </div>
         </div>
       </div>
     );
@@ -496,10 +499,13 @@ function Replayer() {
 
   if (handQ.isError || !hand) {
     return (
-      <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-        {filtersPanel}
-        <div className="flex h-64 flex-col items-center justify-center gap-3">
-          <p className="text-sm text-loss">Erro ao carregar a mão.</p>
+      <div className="space-y-4">
+        {filterBar}
+        <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+          {handsListPanel}
+          <div className="flex h-64 flex-col items-center justify-center gap-3">
+            <p className="text-sm text-loss">Erro ao carregar a mão.</p>
+          </div>
         </div>
       </div>
     );
@@ -580,8 +586,25 @@ function Replayer() {
     .filter(Boolean)
     .join(" · ");
 
+  const gridKind: "push" | "call" = ia.spot_kind === "facing_shove" ? "call" : "push";
+
+  // Resumo de 1 linha pra cada análise — fica visível mesmo com o card
+  // recolhido, então recolher não esconde a informação, só o detalhe.
+  const iaSummary = !ia.in_scope
+    ? "IA: fora do escopo"
+    : ia.hero_decision === ia.nash_decision
+      ? `IA: correta (+${(ia.ev_push_bb ?? 0).toFixed(2)} BB)`
+      : `IA: incorreta (−${(ia.ev_lost_bb ?? 0).toFixed(2)} BB)`;
+  const icmSummary = !currentTournament?.has_payouts
+    ? "ICM: sem premiação cadastrada"
+    : !icmHandQ.data?.in_scope
+      ? "ICM: fora do escopo"
+      : icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
+        ? "ICM: correta"
+        : `ICM: incorreta (−$${(icmHandQ.data.icm_ev_lost ?? 0).toFixed(2)})`;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <PageHeader
         title="Replayer"
         description={description}
@@ -629,112 +652,312 @@ function Replayer() {
         }
       />
 
-      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
-        {filtersPanel}
+      {filterBar}
+
+      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+        {handsListPanel}
 
         <div className="space-y-4">
-          {/* Mesa */}
-          <Panel>
-            <div className="flex flex-wrap items-center gap-1 border-b border-border px-4 py-2.5">
-              {streetEntries.map((e, i) => (
-                <span key={e.key} className="flex items-center gap-1">
-                  {i > 0 && <ChevronRight className="size-3 text-muted-foreground" />}
-                  <button
-                    type="button"
-                    onClick={() => setStep(e.idx)}
-                    className={cn(
-                      "rounded px-2 py-1 text-xs font-medium transition-colors",
-                      currentStreetIdx === e.idx
-                        ? "bg-primary/15 text-primary"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {e.label}
-                  </button>
-                </span>
-              ))}
-            </div>
-
-            <PokerTable
-              seats={tableSeats}
-              board={boardCards}
-              pot={pot}
-              cardSize="2xl"
-              seatCardSize="xl"
-            />
-
-            {/* Controles */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setStep(0)}
-                  aria-label="Ir para o início"
-                >
-                  <SkipBack className="size-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setStep((s) => Math.max(0, s - 1))}
-                  aria-label="Ação anterior"
-                >
-                  <ChevronLeft className="size-4" />
-                </Button>
-                <Button
-                  variant={playing ? "secondary" : "default"}
-                  size="sm"
-                  onClick={() => {
-                    if (!playing && step >= steps.length - 1) setStep(0);
-                    setPlaying((p) => !p);
-                  }}
-                >
-                  {playing ? (
-                    <>
-                      <Pause className="mr-1.5 size-3.5" /> Pause
-                    </>
-                  ) : (
-                    <>
-                      <Play className="mr-1.5 size-3.5" /> Play
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setStep((s) => Math.min(steps.length - 1, s + 1))}
-                  aria-label="Próxima ação"
-                >
-                  <ChevronRight className="size-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setStep(steps.length - 1)}
-                  aria-label="Ir para o fim"
-                >
-                  <SkipForward className="size-4" />
-                </Button>
-              </div>
-              <div className="flex items-center gap-2">
-                <Gauge className="size-3.5 text-muted-foreground" />
-                {([0.5, 1, 2] as const).map((v) => (
-                  <Button
-                    key={v}
-                    variant={v === speed ? "secondary" : "ghost"}
-                    size="sm"
-                    className="num h-7 px-2 text-xs"
-                    onClick={() => setSpeed(v)}
-                  >
-                    {v}x
-                  </Button>
+          {/* Mesa + mapa de mãos lado a lado — a análise (IA/ICM) virou
+              card recolhível abaixo em vez de coluna lateral fixa, então
+              mesa e heatmap ganham a largura toda que sobrar. */}
+          <div className="flex flex-wrap items-start gap-4">
+            <Panel className="w-full min-w-0 max-w-[760px]">
+              <div className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2">
+                {streetEntries.map((e, i) => (
+                  <span key={e.key} className="flex items-center gap-1">
+                    {i > 0 && <ChevronRight className="size-3 text-muted-foreground" />}
+                    <button
+                      type="button"
+                      onClick={() => setStep(e.idx)}
+                      className={cn(
+                        "rounded px-2 py-1 text-xs font-medium transition-colors",
+                        currentStreetIdx === e.idx
+                          ? "bg-primary/15 text-primary"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {e.label}
+                    </button>
+                  </span>
                 ))}
               </div>
-              <span className="num text-xs text-muted-foreground">
-                Ação {step + 1} de {steps.length}
-              </span>
-            </div>
+
+              <PokerTable
+                seats={tableSeats}
+                board={boardCards}
+                pot={pot}
+                cardSize="xl"
+                seatCardSize="lg"
+                bb={hand.bb}
+              />
+
+              {/* Controles */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2">
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      const prev = hands[currentIndex - 1];
+                      if (prev) openHand(prev);
+                    }}
+                    disabled={currentIndex <= 0}
+                    aria-label="Mão anterior"
+                    title="Mão anterior"
+                  >
+                    <SkipBack className="size-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setStep((s) => Math.max(0, s - 1))}
+                    aria-label="Ação anterior"
+                  >
+                    <ChevronLeft className="size-4" />
+                  </Button>
+                  <Button
+                    variant={playing ? "secondary" : "default"}
+                    size="sm"
+                    onClick={() => {
+                      if (!playing && step >= steps.length - 1) setStep(0);
+                      setPlaying((p) => !p);
+                    }}
+                  >
+                    {playing ? (
+                      <>
+                        <Pause className="mr-1.5 size-3.5" /> Pause
+                      </>
+                    ) : (
+                      <>
+                        <Play className="mr-1.5 size-3.5" /> Play
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setStep((s) => Math.min(steps.length - 1, s + 1))}
+                    aria-label="Próxima ação"
+                  >
+                    <ChevronRight className="size-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      const next = hands[currentIndex + 1];
+                      if (next) openHand(next);
+                    }}
+                    disabled={currentIndex < 0 || currentIndex >= hands.length - 1}
+                    aria-label="Próxima mão"
+                    title="Próxima mão"
+                  >
+                    <SkipForward className="size-4" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Gauge className="size-3.5 text-muted-foreground" />
+                  {([0.5, 1, 2] as const).map((v) => (
+                    <Button
+                      key={v}
+                      variant={v === speed ? "secondary" : "ghost"}
+                      size="sm"
+                      className="num h-7 px-2 text-xs"
+                      onClick={() => setSpeed(v)}
+                    >
+                      {v}x
+                    </Button>
+                  ))}
+                </div>
+                <span className="num text-xs text-muted-foreground">
+                  Ação {step + 1} de {steps.length}
+                </span>
+              </div>
+            </Panel>
+
+            {/* Heatmap: aparece sempre que der pra calcular efetivo/pot no
+                preflop, mesmo quando o motor não julga a decisão real
+                (spot_kind="reference" — ver preflop_reference_spot no
+                backend). Só falta quando não há herói/oponente ativo
+                identificável (ex. hero sentou fora, mão sem preflop). */}
+            {ia.effective_bb != null && ia.pot_bb != null && (
+              <div className="min-w-0 flex-1">
+                <RangeGridPanel
+                  effectiveBb={ia.effective_bb}
+                  potBb={ia.pot_bb}
+                  heroCards={heroCards}
+                  kind={gridKind}
+                  cellPx={28}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Análise (IA + ICM) — recolhida por padrão, expande sob demanda.
+              Antes era 2 painéis fixos numa coluna lateral de 300px; agora
+              é 1 card que ocupa a largura toda só quando aberto, deixando
+              mesa+heatmap com mais espaço o resto do tempo. */}
+          <Panel
+            title="Análise"
+            subtitle={`${iaSummary} · ${icmSummary}`}
+            actions={
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setAnalysisOpen((o) => !o)}
+              >
+                {analysisOpen ? "Recolher" : "Detalhes"}
+                <ChevronDown
+                  className={cn(
+                    "ml-1.5 size-3.5 transition-transform",
+                    analysisOpen && "rotate-180",
+                  )}
+                />
+              </Button>
+            }
+          >
+            {analysisOpen && (
+              <div className="grid divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                <div className="space-y-3 p-4 text-sm leading-relaxed">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">
+                    IA ·{" "}
+                    {ia.spot_kind === "facing_shove"
+                      ? `pagar all-in de ${ia.shover_position ?? "vilão"}`
+                      : "abertura preflop"}
+                  </p>
+                  {!ia.in_scope ? (
+                    <p className="text-muted-foreground">
+                      {ia.reason ?? "Spot fora do escopo da análise push/fold."}
+                    </p>
+                  ) : (
+                    <>
+                      <p>
+                        A decisão do Hero foi{" "}
+                        <strong
+                          className={
+                            ia.hero_decision === ia.nash_decision ? "text-profit" : "text-loss"
+                          }
+                        >
+                          {ia.hero_decision === ia.nash_decision ? "correta" : "incorreta"}
+                        </strong>
+                        {ia.nash_decision && (
+                          <>
+                            {" "}
+                            — a jogada Nash é <strong>{ia.nash_decision}</strong>.
+                          </>
+                        )}
+                      </p>
+                      {ia.ev_push_bb != null && (
+                        <p className="text-muted-foreground">
+                          {ia.spot_kind === "facing_shove" ? "EV do call" : "EV do shove"}:{" "}
+                          <strong>{ia.ev_push_bb.toFixed(2)} BB</strong>
+                          {ia.ev_lost_bb != null && ia.ev_lost_bb > 0 && (
+                            <>
+                              {" "}
+                              · EV perdido:{" "}
+                              <strong className="text-loss">−{ia.ev_lost_bb.toFixed(2)} BB</strong>
+                            </>
+                          )}
+                        </p>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className={
+                          ia.hero_decision === ia.nash_decision ? "text-profit" : "text-loss"
+                        }
+                      >
+                        {ia.hero_decision === ia.nash_decision
+                          ? `Decisão correta · +${(ia.ev_push_bb ?? 0).toFixed(2)} BB EV`
+                          : `Decisão incorreta · −${(ia.ev_lost_bb ?? 0).toFixed(2)} BB perdido`}
+                      </Badge>
+                    </>
+                  )}
+                </div>
+
+                <div className="space-y-3 p-4 text-sm leading-relaxed">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">
+                    ICM · Fold/Call/Push com $EV real do payout
+                  </p>
+                  {!currentTournament?.has_payouts ? (
+                    <p className="text-muted-foreground">
+                      Cadastre a premiação desse torneio em{" "}
+                      <Link to="/icm" className="text-primary underline">
+                        ICM
+                      </Link>{" "}
+                      pra habilitar essa análise — sem ela o $EV seria inventado.
+                    </p>
+                  ) : icmHandQ.isLoading ? (
+                    <p className="text-muted-foreground">Calculando ICM…</p>
+                  ) : !icmHandQ.data?.in_scope ? (
+                    <p className="text-muted-foreground">
+                      {icmHandQ.data?.reason ?? "Spot fora do escopo do motor de ICM."}
+                    </p>
+                  ) : (
+                    <>
+                      <p>
+                        A decisão do Hero foi{" "}
+                        <strong
+                          className={
+                            icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
+                              ? "text-profit"
+                              : "text-loss"
+                          }
+                        >
+                          {icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
+                            ? "correta"
+                            : "incorreta"}
+                        </strong>
+                        {icmHandQ.data.icm_decision && (
+                          <>
+                            {" "}
+                            — o ICM manda <strong>{icmHandQ.data.icm_decision}</strong>.
+                          </>
+                        )}
+                      </p>
+                      {icmHandQ.data.icm_ev_fold != null && icmHandQ.data.icm_ev_push != null && (
+                        <p className="text-muted-foreground">
+                          $EV fold: <strong>${icmHandQ.data.icm_ev_fold.toFixed(2)}</strong> · $EV
+                          push: <strong>${icmHandQ.data.icm_ev_push.toFixed(2)}</strong>
+                          {icmHandQ.data.icm_ev_lost != null && icmHandQ.data.icm_ev_lost > 0 && (
+                            <>
+                              {" "}
+                              · $EV perdido:{" "}
+                              <strong className="text-loss">
+                                −${icmHandQ.data.icm_ev_lost.toFixed(2)}
+                              </strong>
+                            </>
+                          )}
+                        </p>
+                      )}
+                      {icmHandQ.data.risk_premium_pct != null && (
+                        <p className="text-muted-foreground">
+                          Prêmio de risco do ICM:{" "}
+                          <strong>{icmHandQ.data.risk_premium_pct.toFixed(1)}%</strong> mais tight
+                          que chip EV
+                          {icmHandQ.data.effective_bb != null && (
+                            <> · efetivo {icmHandQ.data.effective_bb} BB</>
+                          )}
+                        </p>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className={
+                          icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
+                            ? "text-profit"
+                            : "text-loss"
+                        }
+                      >
+                        {icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
+                          ? "Decisão correta pelo ICM"
+                          : `Decisão incorreta · −$${(icmHandQ.data.icm_ev_lost ?? 0).toFixed(2)} perdido`}
+                      </Badge>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </Panel>
 
           {/* Timeline */}
@@ -760,205 +983,73 @@ function Replayer() {
               ))}
             </ol>
           </Panel>
-        </div>
 
-        {/* Painel lateral */}
-        <div className="space-y-4">
-          {/* Análise da IA */}
-          <Panel title="Análise da IA" subtitle="Nash equilibrium · MTT">
-            <div className="space-y-3 p-4 text-sm leading-relaxed">
-              {!ia.in_scope ? (
-                <p className="text-muted-foreground">
-                  {ia.reason ?? "Spot fora do escopo da análise push/fold."}
-                </p>
-              ) : (
-                <>
-                  <p>
-                    A decisão do Hero foi{" "}
-                    <strong
-                      className={
-                        ia.hero_decision === ia.nash_decision ? "text-profit" : "text-loss"
-                      }
-                    >
-                      {ia.hero_decision === ia.nash_decision ? "correta" : "incorreta"}
-                    </strong>
-                    {ia.nash_decision && (
-                      <>
-                        {" "}
-                        — a jogada Nash é <strong>{ia.nash_decision}</strong>.
-                      </>
-                    )}
-                  </p>
-                  {ia.ev_push_bb != null && (
-                    <p className="text-muted-foreground">
-                      EV do shove: <strong>{ia.ev_push_bb.toFixed(2)} BB</strong>
-                      {ia.ev_lost_bb != null && ia.ev_lost_bb > 0 && (
-                        <>
-                          {" "}
-                          · EV perdido:{" "}
-                          <strong className="text-loss">−{ia.ev_lost_bb.toFixed(2)} BB</strong>
-                        </>
-                      )}
-                    </p>
-                  )}
-                  <Badge
-                    variant="outline"
-                    className={ia.hero_decision === ia.nash_decision ? "text-profit" : "text-loss"}
-                  >
-                    {ia.hero_decision === ia.nash_decision
-                      ? `Decisão correta · +${(ia.ev_push_bb ?? 0).toFixed(2)} BB EV`
-                      : `Decisão incorreta · −${(ia.ev_lost_bb ?? 0).toFixed(2)} BB perdido`}
-                  </Badge>
-                </>
-              )}
-            </div>
-          </Panel>
-
-          {/* Análise ICM */}
-          <Panel title="Análise ICM" subtitle="Fold/Call/Push · $EV real do payout">
-            <div className="space-y-3 p-4 text-sm leading-relaxed">
-              {!currentTournament?.has_payouts ? (
-                <p className="text-muted-foreground">
-                  Cadastre a premiação desse torneio em{" "}
-                  <Link to="/icm" className="text-primary underline">
-                    ICM
-                  </Link>{" "}
-                  pra habilitar essa análise — sem ela o $EV seria inventado.
-                </p>
-              ) : icmHandQ.isLoading ? (
-                <p className="text-muted-foreground">Calculando ICM…</p>
-              ) : !icmHandQ.data?.in_scope ? (
-                <p className="text-muted-foreground">
-                  {icmHandQ.data?.reason ?? "Spot fora do escopo do motor de ICM."}
-                </p>
-              ) : (
-                <>
-                  <p>
-                    A decisão do Hero foi{" "}
-                    <strong
-                      className={
-                        icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
-                          ? "text-profit"
-                          : "text-loss"
-                      }
-                    >
-                      {icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
-                        ? "correta"
-                        : "incorreta"}
-                    </strong>
-                    {icmHandQ.data.icm_decision && (
-                      <>
-                        {" "}
-                        — o ICM manda <strong>{icmHandQ.data.icm_decision}</strong>.
-                      </>
-                    )}
-                  </p>
-                  {icmHandQ.data.icm_ev_fold != null && icmHandQ.data.icm_ev_push != null && (
-                    <p className="text-muted-foreground">
-                      $EV fold: <strong>${icmHandQ.data.icm_ev_fold.toFixed(2)}</strong> · $EV push:{" "}
-                      <strong>${icmHandQ.data.icm_ev_push.toFixed(2)}</strong>
-                      {icmHandQ.data.icm_ev_lost != null && icmHandQ.data.icm_ev_lost > 0 && (
-                        <>
-                          {" "}
-                          · $EV perdido:{" "}
-                          <strong className="text-loss">
-                            −${icmHandQ.data.icm_ev_lost.toFixed(2)}
-                          </strong>
-                        </>
-                      )}
-                    </p>
-                  )}
-                  {icmHandQ.data.risk_premium_pct != null && (
-                    <p className="text-muted-foreground">
-                      Prêmio de risco do ICM:{" "}
-                      <strong>{icmHandQ.data.risk_premium_pct.toFixed(1)}%</strong> mais tight que
-                      chip EV
-                      {icmHandQ.data.effective_bb != null && (
-                        <> · efetivo {icmHandQ.data.effective_bb} BB</>
-                      )}
-                    </p>
-                  )}
-                  <Badge
-                    variant="outline"
-                    className={
-                      icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
-                        ? "text-profit"
-                        : "text-loss"
-                    }
-                  >
-                    {icmHandQ.data.hero_decision === icmHandQ.data.icm_decision
-                      ? "Decisão correta pelo ICM"
-                      : `Decisão incorreta · −$${(icmHandQ.data.icm_ev_lost ?? 0).toFixed(2)} perdido`}
-                  </Badge>
-                </>
-              )}
-            </div>
-          </Panel>
-
-          {/* Métricas */}
-          <Panel title="Métricas">
-            <dl className="divide-y divide-border">
-              {[
-                { label: "Torneio", value: hand.tournament_name ?? `#${hand.tournament_id}` },
-                { label: "Buy-in", value: hand.buyin != null ? `$${hand.buyin}` : "—" },
-                {
-                  label: "Data",
-                  value: hand.ts ? new Date(hand.ts).toLocaleDateString("pt-BR") : "—",
-                },
-                {
-                  label: "Blinds",
-                  value: `${hand.sb}/${hand.bb}${hand.ante ? ` (${hand.ante} ante)` : ""}`,
-                },
-                {
-                  label: "Hero",
-                  value: hand.hero
-                    ? `${hand.hero}${heroSeat?.position ? ` · ${heroSeat.position}` : ""}`
-                    : "—",
-                },
-                { label: "Cartas", value: hand.hero_cards ?? "—" },
-                { label: "Assentos", value: String(hand.seats.length) },
-              ].map((m) => (
-                <div key={m.label} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                  <dt className="text-xs text-muted-foreground">{m.label}</dt>
-                  <dd className="num text-sm font-semibold">{m.value}</dd>
-                </div>
-              ))}
-            </dl>
-          </Panel>
-
-          {/* Notas e Tags */}
-          <Panel title="Notas">
-            <div className="space-y-3 p-4">
-              <Textarea
-                value={note}
-                onChange={(e) => {
-                  setNote(e.target.value);
-                  setNoteSaved(false);
-                }}
-                placeholder="Anote a leitura, o plano para o spot e o que treinar depois…"
-                className="min-h-24 resize-none text-sm"
-              />
-              <Separator />
-              <div className="flex flex-wrap gap-1.5">
-                {hand.tags.map((t) => (
-                  <Badge key={t} variant="secondary" className="text-[10px] font-normal">
-                    {t}
-                  </Badge>
+          {/* Métricas + Notas — lado a lado, compactos, não mais numa
+              coluna lateral permanente. */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel title="Métricas">
+              <dl className="divide-y divide-border">
+                {[
+                  { label: "Torneio", value: hand.tournament_name ?? `#${hand.tournament_id}` },
+                  { label: "Buy-in", value: hand.buyin != null ? `$${hand.buyin}` : "—" },
+                  {
+                    label: "Data",
+                    value: hand.ts ? new Date(hand.ts).toLocaleDateString("pt-BR") : "—",
+                  },
+                  {
+                    label: "Blinds",
+                    value: `${hand.sb}/${hand.bb}${hand.ante ? ` (${hand.ante} ante)` : ""}`,
+                  },
+                  {
+                    label: "Hero",
+                    value: hand.hero
+                      ? `${hand.hero}${heroSeat?.position ? ` · ${heroSeat.position}` : ""}`
+                      : "—",
+                  },
+                  { label: "Cartas", value: hand.hero_cards ?? "—" },
+                  { label: "Assentos", value: String(hand.seats.length) },
+                ].map((m) => (
+                  <div key={m.label} className="flex items-center justify-between gap-3 px-4 py-2">
+                    <dt className="text-xs text-muted-foreground">{m.label}</dt>
+                    <dd className="num text-sm font-semibold">{m.value}</dd>
+                  </div>
                 ))}
-                {hand.tags.length === 0 && (
-                  <span className="text-xs text-muted-foreground">Sem tags</span>
-                )}
+              </dl>
+            </Panel>
+
+            <Panel title="Notas">
+              <div className="space-y-3 p-4">
+                <Textarea
+                  value={note}
+                  onChange={(e) => {
+                    setNote(e.target.value);
+                    setNoteSaved(false);
+                  }}
+                  placeholder="Anote a leitura, o plano para o spot e o que treinar depois…"
+                  className="min-h-20 resize-none text-sm"
+                />
+                <Separator />
+                <div className="flex flex-wrap gap-1.5">
+                  {hand.tags.map((t) => (
+                    <Badge key={t} variant="secondary" className="text-[10px] font-normal">
+                      {t}
+                    </Badge>
+                  ))}
+                  {hand.tags.length === 0 && (
+                    <span className="text-xs text-muted-foreground">Sem tags</span>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  className="w-full"
+                  onClick={() => noteMutation.mutate()}
+                  disabled={noteMutation.isPending || noteSaved}
+                >
+                  {noteSaved ? "Nota salva ✓" : "Salvar nota"}
+                </Button>
               </div>
-              <Button
-                size="sm"
-                className="w-full"
-                onClick={() => noteMutation.mutate()}
-                disabled={noteMutation.isPending || noteSaved}
-              >
-                {noteSaved ? "Nota salva ✓" : "Salvar nota"}
-              </Button>
-            </div>
-          </Panel>
+            </Panel>
+          </div>
         </div>
       </div>
     </div>
