@@ -220,6 +220,10 @@ function Trainer() {
           ...(nPlayers ? { n_players: nPlayers } : {}),
         }),
       staleTime: Infinity,
+      // Sem retry: um 404 aqui é "pool esgotado" (poucas mãos reais com
+      // esse filtro), não falha transitória de rede — reoferecer 3x com
+      // backoff só deixa a tela "Carregando…" travada por ~7s à toa.
+      retry: false,
     })),
   });
 
@@ -571,26 +575,51 @@ function Trainer() {
         </>
       ) : (
         <>
-          {/* Mesa — sempre mostra o cenário em foco (clique num card
-              abaixo pra trocar); os 4 cenários ficam logo abaixo dela. */}
-          <Panel
-            title={`Mesa · Cenário ${activeSlot + 1}`}
-            subtitle={
-              q0
-                ? `${q0.position} · ${q0.effective_bb} BB efetivo · ${q0.n_players} jogadores`
-                : "Carregando…"
-            }
-          >
-            {q0 ? (
-              <PokerTable seats={tableSeats0} cardSize="lg" seatCardSize="md" bb={q0.bb} />
+          {/* Mesma mudança da tela de 1 mão: mesa + mapa de mãos lado a
+              lado, mesma altura (grid stretch), cartas maiores. Mesa
+              sempre mostra o cenário em foco (clique num card abaixo pra
+              trocar) — os 4 cenários (o diferencial dessa tela) ficam
+              numa fileira própria embaixo, cheia, porque 4 cards
+              precisam de mais largura do que uma 3ª coluna daria. */}
+          <div className="grid items-stretch gap-4 xl:grid-cols-[880px_minmax(520px,1fr)]">
+            <Panel
+              className="h-full w-full min-w-0"
+              title={`Mesa · Cenário ${activeSlot + 1}`}
+              subtitle={
+                q0
+                  ? `${q0.position} · ${q0.effective_bb} BB efetivo · ${q0.n_players} jogadores`
+                  : "Carregando…"
+              }
+            >
+              {q0 ? (
+                <PokerTable seats={tableSeats0} cardSize="xl" seatCardSize="lg" bb={q0.bb} />
+              ) : (
+                <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+                  Carregando…
+                </div>
+              )}
+            </Panel>
+
+            {answered0 && q0 ? (
+              <RangeGridPanel
+                className="h-full"
+                effectiveBb={q0.effective_bb}
+                potBb={q0.pot_bb}
+                heroCards={heroCards0}
+                kind={q0.mode === "facing_shove" ? "call" : "push"}
+                cellPx={35}
+              />
             ) : (
-              <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-                Carregando…
-              </div>
+              <Panel className="h-full" title="Mapa de mãos" subtitle="Aparece depois de responder">
+                <div className="flex h-40 items-center justify-center p-4 text-center text-sm text-muted-foreground">
+                  Responda o cenário em foco (Cenário {activeSlot + 1}) pra ver o mapa 13×13 dele.
+                </div>
+              </Panel>
             )}
-          </Panel>
+          </div>
 
           <Panel
+            className="xl:max-w-[880px]"
             title="Cenários"
             subtitle={`${count} mãos reais diferentes · clique num card pra ver na mesa acima · responda cada uma`}
             actions={
@@ -618,15 +647,6 @@ function Trainer() {
               ))}
             </div>
           </Panel>
-
-          {answered0 && q0 && (
-            <RangeGridPanel
-              effectiveBb={q0.effective_bb}
-              potBb={q0.pot_bb}
-              heroCards={heroCards0}
-              kind={q0.mode === "facing_shove" ? "call" : "push"}
-            />
-          )}
         </>
       )}
     </div>

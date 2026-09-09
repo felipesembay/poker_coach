@@ -50,7 +50,12 @@ export function PokerTable({
   // Só o texto (nome/posição/stack/ação) mora nessa largura agora — as
   // cartas saíram do quadro e flutuam fora dele (ver abaixo), então não
   // precisa mais ser larga o bastante pra caber as 2 cartas lado a lado.
-  const seatBoxWidth = seatCardSize === "sm" ? 100 : seatCardSize === "md" ? 118 : 158;
+  const baseSeatBoxWidth = seatCardSize === "sm" ? 100 : seatCardSize === "md" ? 118 : 158;
+  // Mesa com 7-9 jogadores tem menos "arco" disponível por assento —
+  // sem encolher, os quadros vizinhos (ex. UTG+1/Hero/BB numa mesa 7-max)
+  // colidem e o texto vira sopa de letrinha. Encolhe proporcionalmente
+  // acima de 6 assentos; até 6 (a maioria das mãos) fica do tamanho normal.
+  const seatBoxWidth = baseSeatBoxWidth * Math.min(1, 6 / seats.length);
 
   return (
     <div className="grid-lines relative aspect-[16/10] w-full overflow-hidden rounded-lg p-6">
@@ -88,13 +93,13 @@ export function PokerTable({
               cardsAboveBox && "flex-col-reverse",
             )}
             style={{
-              left: `${50 + 39 * Math.cos(rad)}%`,
-              // Raio vertical menor que o horizontal (33 vs 39) de propósito:
-              // o quadro+cartas empilhados (flex-col) é bem mais alto que
-              // largo, então o assento de cima/baixo (sin próximo de ±1)
-              // precisa de mais folga vertical até a borda do container
-              // pra não cortar as cartas no overflow-hidden — mesmo raio
-              // dos lados batia as cartas do Hero na borda de baixo.
+              // 35/33 em vez de 39/37: com mesa mais estreita (pra caber o
+              // mapa de mãos do lado) e mesas de 7+ jogadores, o assento
+              // mais à esquerda/direita (perto de 180°) ou de cima/baixo
+              // (perto de ±90°) chegava a estourar a borda do container e
+              // cortar no overflow-hidden — raio menor em ambos os eixos
+              // dá folga suficiente pro quadro+cartas caber inteiro.
+              left: `${50 + 35 * Math.cos(rad)}%`,
               top: `${50 + 33 * Math.sin(rad)}%`,
               width: seatBoxWidth,
             }}
