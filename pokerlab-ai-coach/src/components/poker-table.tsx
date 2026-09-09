@@ -89,7 +89,13 @@ export function PokerTable({
             )}
             style={{
               left: `${50 + 39 * Math.cos(rad)}%`,
-              top: `${50 + 37 * Math.sin(rad)}%`,
+              // Raio vertical menor que o horizontal (33 vs 39) de propósito:
+              // o quadro+cartas empilhados (flex-col) é bem mais alto que
+              // largo, então o assento de cima/baixo (sin próximo de ±1)
+              // precisa de mais folga vertical até a borda do container
+              // pra não cortar as cartas no overflow-hidden — mesmo raio
+              // dos lados batia as cartas do Hero na borda de baixo.
+              top: `${50 + 33 * Math.sin(rad)}%`,
               width: seatBoxWidth,
             }}
           >

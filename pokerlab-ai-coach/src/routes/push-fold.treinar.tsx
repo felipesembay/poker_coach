@@ -400,13 +400,13 @@ function Trainer() {
 
       {count === 1 ? (
         <>
-          {/* Mesa (menor, largura travada) + mapa de mãos e feedback
-              empilhados ao lado — cabem juntos na mesma coluna, sem
-              precisar de um card cheio embaixo disputando espaço com a
-              mesa. */}
-          <div className="flex flex-wrap items-start gap-4">
+          {/* Mesa + mapa de mãos + feedback, os 3 lado a lado na mesma
+              fila — grid (não flex) pra esticar os 3 quadros na mesma
+              altura automaticamente (align-items:stretch é o padrão do
+              grid), em vez de cada um só com sua altura natural. */}
+          <div className="grid items-stretch gap-4 xl:grid-cols-[680px_minmax(450px,1fr)_minmax(380px,1fr)]">
             <Panel
-              className="w-full min-w-0 max-w-[680px]"
+              className="h-full w-full min-w-0"
               title="Situação"
               subtitle={
                 q0
@@ -475,97 +475,98 @@ function Trainer() {
               ) : null}
             </Panel>
 
-            {/* Mapa de mãos + Feedback empilhados na mesma coluna lateral —
-                o mapa só existe depois de responder (precisa saber o que
-                comparar contra), o feedback idem. */}
-            <div className="min-w-0 flex-1 space-y-4">
-              {answered0 && q0 ? (
-                <RangeGridPanel
-                  effectiveBb={q0.effective_bb}
-                  potBb={q0.pot_bb}
-                  heroCards={heroCards0}
-                  kind={q0.mode === "facing_shove" ? "call" : "push"}
-                  cellPx={26}
-                />
-              ) : (
-                <Panel title="Mapa de mãos" subtitle="Aparece depois de responder">
-                  <div className="flex h-40 items-center justify-center p-4 text-center text-sm text-muted-foreground">
-                    Escolha {actions0.join(" ou ")} pra ver o mapa 13×13 comparado com o Nash desse
-                    stack/pot.
-                  </div>
-                </Panel>
-              )}
-
-              <Panel
-                title="Feedback"
-                subtitle={answered0 ? "Análise do spot" : "Responda para ver a análise"}
-              >
-                {answered0 && feedback0 ? (
-                  <div className="space-y-3 p-4 fade-up">
-                    <div className="grid gap-2">
-                      <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
-                        <span className="text-xs text-muted-foreground">Sua resposta</span>
-                        <span
-                          className={cn(
-                            "num text-sm font-semibold",
-                            feedback0.correct ? "text-profit" : "text-loss",
-                          )}
-                        >
-                          {userDecision0}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
-                        <span className="text-xs text-muted-foreground">Decisão Nash</span>
-                        <span className="num text-sm font-semibold text-profit">
-                          {feedback0.nash_decision}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
-                        <span className="text-xs text-muted-foreground">
-                          {q0?.mode === "facing_shove" ? "EV do call" : "EV do shove"}
-                        </span>
-                        <span className="num text-sm font-semibold">
-                          {feedback0.ev_bb.toFixed(2)} BB
-                        </span>
-                      </div>
-                      {feedback0.ev_lost_bb > 0 && (
-                        <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
-                          <span className="text-xs text-muted-foreground">EV perdido</span>
-                          <span className="num text-sm font-semibold text-loss">
-                            −{feedback0.ev_lost_bb.toFixed(2)} BB
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    <Badge
-                      variant="outline"
-                      className={feedback0.correct ? "text-profit" : "text-loss"}
-                    >
-                      {feedback0.correct ? "Decisão ótima" : "Decisão sub-ótima"}
-                    </Badge>
-
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">
-                        Explicação
-                      </p>
-                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                        {feedback0.explanation}
-                      </p>
-                    </div>
-
-                    <Button className="w-full" onClick={newBatch}>
-                      Próximo spot
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="p-8 text-center text-sm text-muted-foreground">
-                    Escolha {actions0.join(" ou ")} para revelar a resposta correta, o EV e a
-                    explicação técnica do spot.
-                  </div>
-                )}
+            {/* Mapa de mãos — segunda coluna da fila. Só existe depois de
+                responder (precisa saber o que comparar contra). */}
+            {answered0 && q0 ? (
+              <RangeGridPanel
+                className="h-full"
+                effectiveBb={q0.effective_bb}
+                potBb={q0.pot_bb}
+                heroCards={heroCards0}
+                kind={q0.mode === "facing_shove" ? "call" : "push"}
+                cellPx={30}
+              />
+            ) : (
+              <Panel className="h-full" title="Mapa de mãos" subtitle="Aparece depois de responder">
+                <div className="flex h-40 items-center justify-center p-4 text-center text-sm text-muted-foreground">
+                  Escolha {actions0.join(" ou ")} pra ver o mapa 13×13 comparado com o Nash desse
+                  stack/pot.
+                </div>
               </Panel>
-            </div>
+            )}
+
+            {/* Feedback — terceira coluna, na mesma fila (não mais
+                empilhado embaixo do mapa). */}
+            <Panel
+              className="h-full"
+              title="Feedback"
+              subtitle={answered0 ? "Análise do spot" : "Responda para ver a análise"}
+            >
+              {answered0 && feedback0 ? (
+                <div className="space-y-3 p-4 fade-up">
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
+                      <span className="text-xs text-muted-foreground">Sua resposta</span>
+                      <span
+                        className={cn(
+                          "num text-sm font-semibold",
+                          feedback0.correct ? "text-profit" : "text-loss",
+                        )}
+                      >
+                        {userDecision0}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
+                      <span className="text-xs text-muted-foreground">Decisão Nash</span>
+                      <span className="num text-sm font-semibold text-profit">
+                        {feedback0.nash_decision}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
+                      <span className="text-xs text-muted-foreground">
+                        {q0?.mode === "facing_shove" ? "EV do call" : "EV do shove"}
+                      </span>
+                      <span className="num text-sm font-semibold">
+                        {feedback0.ev_bb.toFixed(2)} BB
+                      </span>
+                    </div>
+                    {feedback0.ev_lost_bb > 0 && (
+                      <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
+                        <span className="text-xs text-muted-foreground">EV perdido</span>
+                        <span className="num text-sm font-semibold text-loss">
+                          −{feedback0.ev_lost_bb.toFixed(2)} BB
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <Badge
+                    variant="outline"
+                    className={feedback0.correct ? "text-profit" : "text-loss"}
+                  >
+                    {feedback0.correct ? "Decisão ótima" : "Decisão sub-ótima"}
+                  </Badge>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">
+                      Explicação
+                    </p>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      {feedback0.explanation}
+                    </p>
+                  </div>
+
+                  <Button className="w-full" onClick={newBatch}>
+                    Próximo spot
+                  </Button>
+                </div>
+              ) : (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Escolha {actions0.join(" ou ")} para revelar a resposta correta, o EV e a
+                  explicação técnica do spot.
+                </div>
+              )}
+            </Panel>
           </div>
         </>
       ) : (

@@ -151,6 +151,7 @@ export function RangeGrid({
  * que usam o grid (Replayer e Treinador). */
 export function RangeGridPanel({
   kind = "push",
+  className = "",
   ...props
 }: {
   effectiveBb: number;
@@ -158,9 +159,11 @@ export function RangeGridPanel({
   heroCards?: string[] | null;
   cellPx?: number;
   kind?: "push" | "call";
+  className?: string;
 }) {
   return (
     <Panel
+      className={className}
       title="Mapa de mãos"
       subtitle={
         kind === "call"
