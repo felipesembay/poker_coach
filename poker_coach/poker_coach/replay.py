@@ -234,7 +234,7 @@ def list_hands(conn: sqlite3.Connection, *, site: str | None = None,
                 favorite: bool | None = None, showdown: bool | None = None,
                 all_in: bool | None = None,
                 date_from: str | None = None, date_to: str | None = None,
-                limit: int = 200) -> list[dict]:
+                limit: int | None = None) -> list[dict]:
     """Busca de mãos pro seletor do Replayer (e Modo Estudo) — todos os
     filtros são opcionais e combináveis. `favorite`/`showdown`/`all_in`
     são tri-state (None = todos, True/False = só sim/só não); `result`
@@ -301,19 +301,28 @@ def list_hands(conn: sqlite3.Connection, *, site: str | None = None,
 
     # Seleciona as `limit` mãos mais recentes (ORDER BY ts DESC ... LIMIT),
     # mas devolve em ordem cronológica crescente (ts ASC) — a sequência
-    # real de jogo dentro de um torneio, pra o Replayer não mostrar a
-    # última mão do torneio primeiro.
-    sql = f"""SELECT * FROM (
-                SELECT h.site, h.hand_id, h.tournament_id, COALESCE(t.name, h.tournament_id) AS tname,
-                       t.buyin, h.ts, h.hero_position, h.hero_cards, h.hero_stack_bb,
-                       h.hero_net_chips, h.bb, h.favorite, h.board, h.n_players,
-                       {sd_expr} AS showdown, {ai_expr} AS all_in
-                FROM hands h LEFT JOIN tournaments t
-                  ON t.site = h.site AND t.tournament_id = h.tournament_id
-                WHERE {' AND '.join(where)}
-                ORDER BY h.ts DESC LIMIT ?
-              ) recent ORDER BY ts ASC"""
-    params.append(limit)
+    # real de jogo dentro de um torneio. Se limit for None, retorna todas as mãos.
+    if limit is not None:
+        sql = f"""SELECT * FROM (
+                    SELECT h.site, h.hand_id, h.tournament_id, COALESCE(t.name, h.tournament_id) AS tname,
+                           t.buyin, h.ts, h.hero_position, h.hero_cards, h.hero_stack_bb,
+                           h.hero_net_chips, h.bb, h.favorite, h.board, h.n_players,
+                           {sd_expr} AS showdown, {ai_expr} AS all_in
+                    FROM hands h LEFT JOIN tournaments t
+                      ON t.site = h.site AND t.tournament_id = h.tournament_id
+                    WHERE {' AND '.join(where)}
+                    ORDER BY h.ts DESC LIMIT ?
+                  ) recent ORDER BY ts ASC"""
+        params.append(limit)
+    else:
+        sql = f"""SELECT h.site, h.hand_id, h.tournament_id, COALESCE(t.name, h.tournament_id) AS tname,
+                         t.buyin, h.ts, h.hero_position, h.hero_cards, h.hero_stack_bb,
+                         h.hero_net_chips, h.bb, h.favorite, h.board, h.n_players,
+                         {sd_expr} AS showdown, {ai_expr} AS all_in
+                  FROM hands h LEFT JOIN tournaments t
+                    ON t.site = h.site AND t.tournament_id = h.tournament_id
+                  WHERE {' AND '.join(where)}
+                  ORDER BY h.ts ASC"""
     rows = conn.execute(sql, params).fetchall()
     return [{
         "site": s, "hand_id": hid, "tournament_id": tid, "tournament_name": tname,

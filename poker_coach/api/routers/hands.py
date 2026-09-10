@@ -52,7 +52,7 @@ def list_hands(
     tag: str | None = None, favorite_only: bool = False, showdown_only: bool = False,
     all_in_only: bool = False,
     date_from: str | None = None, date_to: str | None = None,
-    limit: int = Query(50, le=500), offset: int = Query(0, ge=0),
+    limit: int | None = Query(None), offset: int = Query(0, ge=0),
 ):
     conn = _conn()
     try:
@@ -85,6 +85,8 @@ def list_hands(
         if all_in_only:
             where.append(ai_expr)
 
+        limit_clause = " LIMIT ?" if limit is not None else ""
+        offset_clause = " OFFSET ?" if offset > 0 or limit is not None else ""
         sql = f"""SELECT h.site, h.hand_id, h.tournament_id, COALESCE(t.name, h.tournament_id),
                          h.hero_position, h.hero_cards, h.hero_stack_bb, h.board,
                          CAST(h.hero_net_chips AS REAL) / h.bb AS net_bb, h.favorite,
@@ -92,8 +94,11 @@ def list_hands(
                   FROM hands h LEFT JOIN tournaments t
                     ON t.site = h.site AND t.tournament_id = h.tournament_id
                   WHERE {' AND '.join(where)} AND h.bb > 0
-                  ORDER BY h.ts DESC LIMIT ? OFFSET ?"""
-        params += [limit, offset]
+                  ORDER BY h.ts DESC{limit_clause}{offset_clause}"""
+        if limit is not None:
+            params.append(limit)
+        if offset > 0 or limit is not None:
+            params.append(offset)
         rows = conn.execute(sql, params).fetchall()
 
         out = []

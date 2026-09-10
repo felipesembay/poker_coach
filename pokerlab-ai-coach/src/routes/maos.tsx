@@ -57,7 +57,6 @@ function HandsPage() {
         ...(position !== "Todas" ? { position } : {}),
         ...(showdownOnly === "Sim" ? { showdown_only: true } : {}),
         ...(allInOnly === "Sim" ? { all_in_only: true } : {}),
-        limit: 200,
       }),
   });
 

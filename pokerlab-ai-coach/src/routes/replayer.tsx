@@ -191,7 +191,6 @@ function Replayer() {
         ...(filters.bbRange[0] > 0 ? { bb_min: filters.bbRange[0] } : {}),
         ...(filters.bbRange[1] < 100 ? { bb_max: filters.bbRange[1] } : {}),
         ...(filters.q ? { q: filters.q } : {}),
-        limit: 300,
       }),
   });
   const hands = listQ.data ?? [];

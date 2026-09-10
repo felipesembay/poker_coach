@@ -69,7 +69,7 @@ function PushFoldPage() {
   });
   const spotsQ = useQuery({
     queryKey: ["pushfold-spots"],
-    queryFn: () => pushfoldApi.spots({ bb_min: 5, bb_max: 25, limit: 300 }),
+    queryFn: () => pushfoldApi.spots({ bb_min: 5, bb_max: 25 }),
   });
 
   const spots = spotsQ.data ?? [];

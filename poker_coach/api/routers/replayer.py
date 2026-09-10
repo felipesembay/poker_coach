@@ -48,7 +48,7 @@ def search(site: str | None = None, tournament_id: str | None = None,
            result: str | None = None, tag: str | None = None, q: str | None = None,
            favorite: bool | None = None, showdown: bool | None = None,
            all_in: bool | None = None, date_from: str | None = None,
-           date_to: str | None = None, limit: int = Query(300, le=500)):
+           date_to: str | None = None, limit: int | None = Query(None)):
     conn = _conn()
     try:
         rows = replay.list_hands(

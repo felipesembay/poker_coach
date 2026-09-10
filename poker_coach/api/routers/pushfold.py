@@ -80,9 +80,11 @@ def _to_spot_out(r: pf.LeakRow) -> SpotOut:
 
 @router.get("/spots", response_model=list[SpotOut])
 def list_spots(bb_min: float = Query(5.0), bb_max: float = Query(25.0),
-               limit: int = Query(200, le=2000)):
+               limit: int | None = Query(None)):
     rows = _get_analysis(bb_min, bb_max)
-    return [_to_spot_out(r) for r in rows[:limit]]
+    if limit is not None:
+        rows = rows[:limit]
+    return [_to_spot_out(r) for r in rows]
 
 
 class SummaryOut(BaseModel):
