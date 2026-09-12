@@ -114,6 +114,30 @@ def test_analyze_scope_skips_limped_pot():
     assert row is None  # pote já tinha 3 calls antes do herói: fora do escopo
 
 
+def test_same_scenario_and_custom_cards():
+    """Testa a geração de mãos diversas e a avaliação de EV para cartas customizadas no mesmo cenário."""
+    from api.routers.pushfold import DIVERSE_HAND_POOL
+    assert len(DIVERSE_HAND_POOL) == 15
+    assert len(set(DIVERSE_HAND_POOL)) == 15
+
+    # Testa solve de Nash para duas mãos diferentes no mesmo cenário (BTN 10 BB, pot 1.5 BB)
+    ranking = eq.build_ranking()
+    matrix = eq.build_class_matrix()
+    res = nash.solve(effective_bb=10.0, pot_bb=1.5, ranking=ranking, matrix=matrix)
+
+    # AKs deve ter EV positivo no push
+    hcls_ak = eq.class_of(eq.parse_hand("Ah Kh"))
+    eq_ak = eq.equity_class_vs_range(hcls_ak, res.call_classes, matrix)
+    ev_ak = (1 - res.call_pct) * 1.5 + res.call_pct * (eq_ak * (1.5 + 20.0) - 10.0)
+    assert ev_ak > 0
+
+    # 32o deve ter EV negativo no push
+    hcls_32 = eq.class_of(eq.parse_hand("3h 2c"))
+    eq_32 = eq.equity_class_vs_range(hcls_32, res.call_classes, matrix)
+    ev_32 = (1 - res.call_pct) * 1.5 + res.call_pct * (eq_32 * (1.5 + 20.0) - 10.0)
+    assert ev_32 < 0
+
+
 if __name__ == "__main__":
     test_hand_evaluator_category_ordering()
     test_wheel_straight()
@@ -121,4 +145,6 @@ if __name__ == "__main__":
     test_range_top_pct_is_monotonic_in_size()
     test_nash_solve_shove_range_is_monotonic()
     test_analyze_scope_skips_limped_pot()
+    test_same_scenario_and_custom_cards()
     print("OK: todos os testes de pushfold passaram")
+

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from poker_coach import db as dbm  # noqa: E402
 from poker_coach.models import Hand as HandModel, Seat  # noqa: E402
 from poker_coach.pushfold import analyze as pf  # noqa: E402
+from poker_coach.pushfold import equity as eq  # noqa: E402
 from poker_coach.pushfold import nash  # noqa: E402
 
 from ..deps import DSN  # noqa: E402
@@ -227,11 +228,102 @@ def trainer_next(
         conn.close()
 
 
+DIVERSE_HAND_POOL = [
+    "Ah Kd", "7s 6s", "Qc Jc", "2h 2d", "As 5s",
+    "Kh Td", "9c 8c", "8s 8h", "Qs Jd", "Ac 4c",
+    "Jh Ts", "6d 5d", "Kc Qs", "5c 5h", "Ad 9d"
+]
+
+
+@router.get("/trainer/next-same-scenario", response_model=list[TrainerQuestionOut])
+def trainer_next_same_scenario(
+    mode: Literal["open", "facing_shove"] = Query(
+        "open", description="'open': herói é o primeiro a agir. 'facing_shove': um "
+                             "vilão já deu all-in antes do herói decidir."),
+    bb_min: float = Query(5.0, ge=1, description="Proxy de fase do torneio"),
+    bb_max: float = Query(25.0, le=100),
+    n_players: int | None = Query(None, ge=2, le=9, description="Filtra por jogadores na mesa"),
+    count: int = Query(4, ge=1, le=10, description="Quantidade de mãos no mesmo cenário"),
+):
+    conn = _conn()
+    try:
+        where = ["hero_position IS NOT NULL", "hero_stack_bb BETWEEN ? AND ?"]
+        params: list = [bb_min, bb_max]
+        if mode == "open":
+            where.append("hero_position != 'BB'")
+        if n_players is not None:
+            where.append("n_players = ?")
+            params.append(n_players)
+        candidates = conn.execute(
+            f"SELECT site, hand_id, hero FROM hands WHERE {' AND '.join(where)} "
+            f"ORDER BY RANDOM() LIMIT 60",
+            params,
+        ).fetchall()
+        for site, hand_id, hero in candidates:
+            base_q = None
+            if mode == "open":
+                row = pf.analyze_hand_row(conn, site, hand_id, precise=False)
+                if row is not None:
+                    seats, np_, bb = _seats_for_hand(conn, site, hand_id, hero)
+                    base_q = TrainerQuestionOut(
+                        site=row.site, hand_id=row.hand_id, mode="open",
+                        hero_cards=row.hero_cards,
+                        position=row.position, effective_bb=row.effective_bb, pot_bb=row.pot_bb,
+                        n_players=np_, bb=bb, seats=seats,
+                        context=f"Ninguém entrou no pote ainda. Você é {row.position} "
+                                f"com {row.effective_bb} BB efetivos.",
+                    )
+            else:
+                frow = pf.analyze_facing_shove_hand_row(conn, site, hand_id, precise=False)
+                if frow is not None:
+                    seats, np_, bb = _seats_for_hand(conn, site, hand_id, hero)
+                    base_q = TrainerQuestionOut(
+                        site=frow.site, hand_id=frow.hand_id, mode="facing_shove",
+                        hero_cards=frow.hero_cards, position=frow.position,
+                        shover_position=frow.shover_position,
+                        effective_bb=frow.effective_bb, pot_bb=frow.pot_bb,
+                        n_players=np_, bb=bb, seats=seats,
+                        context=f"{frow.shover_position} deu all-in antes de você agir. "
+                                f"Você é {frow.position} com {frow.effective_bb} BB efetivos.",
+                    )
+            if base_q is not None:
+                chosen_cards: list[str] = [base_q.hero_cards]
+                other_hands = conn.execute(
+                    "SELECT hero_cards FROM hands WHERE hero_position = ? AND hero_stack_bb BETWEEN ? AND ? AND hero_cards IS NOT NULL AND site = ?",
+                    (base_q.position, max(1.0, base_q.effective_bb - 3.0), base_q.effective_bb + 3.0, base_q.site)
+                ).fetchall()
+                for (hc,) in other_hands:
+                    if hc and hc not in chosen_cards:
+                        chosen_cards.append(hc)
+                        if len(chosen_cards) >= count:
+                            break
+                if len(chosen_cards) < count:
+                    for dh in DIVERSE_HAND_POOL:
+                        if dh not in chosen_cards:
+                            chosen_cards.append(dh)
+                            if len(chosen_cards) >= count:
+                                break
+                out: list[TrainerQuestionOut] = []
+                for hc in chosen_cards[:count]:
+                    q_copy = base_q.model_copy()
+                    q_copy.hero_cards = hc
+                    out.append(q_copy)
+                return out
+
+        raise HTTPException(
+            404, f"Nenhum spot {'de abertura' if mode == 'open' else 'de all-in antes de você'} "
+                 f"disponível ({bb_min}-{bb_max} BB{f', {n_players} jogadores' if n_players else ''})."
+        )
+    finally:
+        conn.close()
+
+
 class TrainerAnswerIn(BaseModel):
     site: str
     hand_id: str
     mode: Literal["open", "facing_shove"] = "open"
     decision: Literal["Fold", "All-in", "Call"]
+    hero_cards: str | None = None
 
 
 class TrainerAnswerOut(BaseModel):
@@ -244,16 +336,37 @@ class TrainerAnswerOut(BaseModel):
 
 @router.post("/trainer/answer", response_model=TrainerAnswerOut)
 def trainer_answer(payload: TrainerAnswerIn):
-    # precise=False (matriz pré-computada) — precise=True fazia Monte Carlo
-    # ao vivo aqui e levava ~20-30s por resposta. O resto do app (batch
-    # report, /spots, Streamlit) já usa o caminho rápido; sem motivo pra
-    # esse endpoint ser o único lento.
     conn = _conn()
     try:
         if payload.mode == "open":
             row = pf.analyze_hand_row(conn, payload.site, payload.hand_id, precise=False)
             if row is None:
                 raise HTTPException(404, "Mão fora do escopo do motor (não é mais um spot de abertura).")
+            hero_cards = payload.hero_cards or row.hero_cards
+            if payload.hero_cards and payload.hero_cards != row.hero_cards:
+                result = pf._cached_solve(round(row.effective_bb * 2) / 2, round(row.pot_bb * 4) / 4)
+                hcls = eq.class_of(eq.parse_hand(hero_cards))
+                equity_vs_range = eq.equity_class_vs_range(hcls, result.call_classes, pf._matrix())
+                call_pct = result.call_pct / 100  # result.call_pct é 0..100, não 0..1
+                p_fold = 1 - call_pct
+                ev_push_bb = round(p_fold * row.pot_bb + call_pct * (equity_vs_range * (row.pot_bb + 2 * row.effective_bb) - row.effective_bb), 2)
+                nash_label: Literal["Fold", "All-in", "Call"] = "All-in" if ev_push_bb > 0 else "Fold"
+                correct = payload.decision == nash_label
+                ev_lost = 0.0 if correct else abs(ev_push_bb if nash_label == "All-in" else -ev_push_bb)
+                dbm.log_quiz_answer(conn, payload.site, payload.hand_id,
+                                     "push" if payload.decision == "All-in" else "fold",
+                                     "push" if nash_label == "All-in" else "fold", ev_lost)
+                conn.commit()
+                if nash_label == "All-in":
+                    explanation = (f"Nash manda empurrar: EV do push é {ev_push_bb:+.2f} BB "
+                                    f"contra a range de call de equilíbrio da BB nesse stack/pot.")
+                else:
+                    explanation = (f"Nash manda foldar: o push teria EV {ev_push_bb:+.2f} BB "
+                                    f"(negativo) contra a range de call da BB.")
+                return TrainerAnswerOut(correct=correct, nash_decision=nash_label,
+                                         ev_bb=ev_push_bb, ev_lost_bb=ev_lost,
+                                         explanation=explanation)
+
             nash_label: Literal["Fold", "All-in", "Call"] = (
                 "All-in" if row.nash_decision == "push" else "Fold")
             correct = payload.decision == nash_label
@@ -276,6 +389,29 @@ def trainer_answer(payload: TrainerAnswerIn):
         if frow is None:
             raise HTTPException(
                 404, "Mão fora do escopo do motor (não é mais um spot de all-in antes de você).")
+        hero_cards = payload.hero_cards or frow.hero_cards
+        if payload.hero_cards and payload.hero_cards != frow.hero_cards:
+            result = pf._cached_solve(round(frow.effective_bb * 2) / 2, round(frow.pot_bb * 4) / 4)
+            hcls = eq.class_of(eq.parse_hand(hero_cards))
+            equity_vs_range = eq.equity_class_vs_range(hcls, result.shove_classes, pf._matrix())
+            ev_call_bb = round(equity_vs_range * (frow.pot_bb + 2 * frow.effective_bb) - frow.effective_bb, 2)
+            nash_label = "Call" if ev_call_bb > 0 else "Fold"
+            correct = payload.decision == nash_label
+            ev_lost = 0.0 if correct else abs(ev_call_bb if nash_label == "Call" else -ev_call_bb)
+            dbm.log_quiz_answer(conn, payload.site, payload.hand_id,
+                                 "call" if payload.decision == "Call" else "fold",
+                                 "call" if nash_label == "Call" else "fold", ev_lost)
+            conn.commit()
+            if nash_label == "Call":
+                explanation = (f"Nash manda pagar: EV do call é {ev_call_bb:+.2f} BB contra a "
+                                f"range de all-in de equilíbrio de {frow.shover_position} nesse "
+                                f"stack/pot.")
+            else:
+                explanation = (f"Nash manda foldar: o call teria EV {ev_call_bb:+.2f} BB "
+                                f"(negativo) contra a range de all-in de {frow.shover_position}.")
+            return TrainerAnswerOut(correct=correct, nash_decision=nash_label,
+                                     ev_bb=ev_call_bb, ev_lost_bb=ev_lost, explanation=explanation)
+
         nash_label = "Call" if frow.nash_decision == "call" else "Fold"
         correct = payload.decision == nash_label
         ev_lost = 0.0 if correct else abs(frow.ev_call_bb if frow.nash_decision == "call" else -frow.ev_call_bb)

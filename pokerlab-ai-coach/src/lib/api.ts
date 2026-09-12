@@ -106,10 +106,13 @@ export const trainerApi = {
   next: (
     params: { mode?: TrainerMode; bb_min?: number; bb_max?: number; n_players?: number } = {},
   ) => request<TrainerQuestion>(`/api/pushfold/trainer/next${qs(params)}`),
-  answer: (site: string, hand_id: string, mode: TrainerMode, decision: TrainerDecision) =>
+  nextSameScenario: (
+    params: { mode?: TrainerMode; bb_min?: number; bb_max?: number; n_players?: number; count?: number } = {},
+  ) => request<TrainerQuestion[]>(`/api/pushfold/trainer/next-same-scenario${qs(params)}`),
+  answer: (site: string, hand_id: string, mode: TrainerMode, decision: TrainerDecision, hero_cards?: string) =>
     request<TrainerAnswer>("/api/pushfold/trainer/answer", {
       method: "POST",
-      body: JSON.stringify({ site, hand_id, mode, decision }),
+      body: JSON.stringify({ site, hand_id, mode, decision, hero_cards }),
     }),
   stats: () => request<TrainerStats>("/api/pushfold/trainer/stats"),
 };

@@ -199,33 +199,41 @@ function Trainer() {
   const activeStage = STAGE_PRESETS.find((s) => s.key === stage)!;
   const nPlayers = playerCount === "Qualquer" ? undefined : Number(playerCount);
 
-  // 1 ou 4 spots buscados em paralelo, cada um independente (site+hand_id
-  // próprios) — o mesmo endpoint de sempre, só chamado N vezes por lote.
-  const questionQueries = useQueries({
-    queries: Array.from({ length: count }, (_, i) => ({
-      queryKey: [
-        "trainer-next",
-        mode,
-        batchKey,
-        i,
-        activeStage.bb_min,
-        activeStage.bb_max,
-        nPlayers,
-      ],
-      queryFn: () =>
-        trainerApi.next({
+  const batchQuery = useQuery({
+    queryKey: [
+      "trainer-batch",
+      mode,
+      batchKey,
+      count,
+      activeStage.bb_min,
+      activeStage.bb_max,
+      nPlayers,
+    ],
+    queryFn: async () => {
+      if (count === 4) {
+        return trainerApi.nextSameScenario({
           mode,
           bb_min: activeStage.bb_min,
           bb_max: activeStage.bb_max,
           ...(nPlayers ? { n_players: nPlayers } : {}),
-        }),
-      staleTime: Infinity,
-      // Sem retry: um 404 aqui é "pool esgotado" (poucas mãos reais com
-      // esse filtro), não falha transitória de rede — reoferecer 3x com
-      // backoff só deixa a tela "Carregando…" travada por ~7s à toa.
-      retry: false,
-    })),
+          count: 4,
+        });
+      }
+      const single = await trainerApi.next({
+        mode,
+        bb_min: activeStage.bb_min,
+        bb_max: activeStage.bb_max,
+        ...(nPlayers ? { n_players: nPlayers } : {}),
+      });
+      return [single];
+    },
+    staleTime: Infinity,
+    retry: false,
   });
+
+  const questionsData = batchQuery.data ?? [];
+  const isLoading = batchQuery.isLoading;
+  const isError = batchQuery.isError;
 
   const statsQ = useQuery({
     queryKey: ["trainer-stats"],
@@ -234,9 +242,9 @@ function Trainer() {
 
   const answerMutation = useMutation({
     mutationFn: async ({ slot, decision }: { slot: number; decision: Decision }) => {
-      const q = questionQueries[slot]?.data;
+      const q = questionsData[slot];
       if (!q) throw new Error("Spot não carregado.");
-      const feedback = await trainerApi.answer(q.site, q.hand_id, q.mode, decision);
+      const feedback = await trainerApi.answer(q.site, q.hand_id, q.mode, decision, q.hero_cards);
       return { slot, decision, feedback };
     },
     onSuccess: ({ slot, decision, feedback }) => {
@@ -274,7 +282,7 @@ function Trainer() {
 
   // ---- Mesa — sempre reflete o cenário "em foco" (activeSlot); no modo
   // 1 mão isso é sempre o slot 0, no modo 4 cenários é o card clicado. ----
-  const q0 = questionQueries[activeSlot]?.data;
+  const q0 = questionsData[activeSlot];
   const feedback0 = answers[activeSlot]?.feedback ?? null;
   const userDecision0 = answers[activeSlot]?.decision ?? null;
   const answered0 = !!feedback0;
@@ -415,16 +423,16 @@ function Trainer() {
               subtitle={
                 q0
                   ? `Stack efetivo: ${q0.effective_bb} BB · Pot: ${q0.pot_bb} BB · ${q0.n_players} jogadores`
-                  : questionQueries[activeSlot]?.isLoading
+                  : isLoading
                     ? "Carregando…"
                     : "Erro ao carregar"
               }
             >
-              {questionQueries[activeSlot]?.isLoading ? (
+              {isLoading ? (
                 <div className="p-10 text-center text-sm text-muted-foreground">
                   Carregando spot…
                 </div>
-              ) : questionQueries[activeSlot]?.isError ? (
+              ) : isError ? (
                 <div className="p-10 text-center text-sm text-loss">
                   Nenhum spot encontrado com esses filtros.{" "}
                   <Button size="sm" variant="outline" onClick={newBatch}>
@@ -621,7 +629,11 @@ function Trainer() {
           <Panel
             className="xl:max-w-[880px]"
             title="Cenários"
-            subtitle={`${count} mãos reais diferentes · clique num card pra ver na mesa acima · responda cada uma`}
+            subtitle={
+              q0
+                ? `Mesmo cenário (${q0.position} · ${q0.effective_bb} BB · ${q0.n_players} jogadores) com ${count} mãos diferentes · clique num card para focar`
+                : `${count} mãos diferentes no mesmo cenário · responda cada uma`
+            }
             actions={
               allAnswered ? (
                 <Button size="sm" onClick={newBatch}>
@@ -635,9 +647,9 @@ function Trainer() {
                 <ScenarioCard
                   key={`${batchKey}-${i}`}
                   index={i}
-                  q={questionQueries[i]?.data}
-                  isLoading={!!questionQueries[i]?.isLoading}
-                  isError={!!questionQueries[i]?.isError}
+                  q={questionsData[i]}
+                  isLoading={isLoading}
+                  isError={isError}
                   answered={answers[i] ?? null}
                   pending={answerMutation.isPending && answerMutation.variables?.slot === i}
                   active={activeSlot === i}
