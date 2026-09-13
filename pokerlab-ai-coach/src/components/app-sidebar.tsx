@@ -13,6 +13,7 @@ import {
   TrendingUp,
   Settings,
   Spade,
+  Trophy,
 } from "lucide-react";
 
 import {
@@ -35,6 +36,7 @@ const groups = [
       { title: "Dashboard", url: "/", icon: Home },
       { title: "Sessões", url: "/sessoes", icon: Layers },
       { title: "Hand History", url: "/maos", icon: Table2 },
+      { title: "Torneios", url: "/torneios", icon: Trophy },
       { title: "Replayer", url: "/replayer", icon: PlayCircle },
       { title: "Estatísticas", url: "/estatisticas", icon: LineChart },
     ],

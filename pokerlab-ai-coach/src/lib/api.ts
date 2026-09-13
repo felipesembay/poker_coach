@@ -107,9 +107,21 @@ export const trainerApi = {
     params: { mode?: TrainerMode; bb_min?: number; bb_max?: number; n_players?: number } = {},
   ) => request<TrainerQuestion>(`/api/pushfold/trainer/next${qs(params)}`),
   nextSameScenario: (
-    params: { mode?: TrainerMode; bb_min?: number; bb_max?: number; n_players?: number; count?: number } = {},
+    params: {
+      mode?: TrainerMode;
+      bb_min?: number;
+      bb_max?: number;
+      n_players?: number;
+      count?: number;
+    } = {},
   ) => request<TrainerQuestion[]>(`/api/pushfold/trainer/next-same-scenario${qs(params)}`),
-  answer: (site: string, hand_id: string, mode: TrainerMode, decision: TrainerDecision, hero_cards?: string) =>
+  answer: (
+    site: string,
+    hand_id: string,
+    mode: TrainerMode,
+    decision: TrainerDecision,
+    hero_cards?: string,
+  ) =>
     request<TrainerAnswer>("/api/pushfold/trainer/answer", {
       method: "POST",
       body: JSON.stringify({ site, hand_id, mode, decision, hero_cards }),
@@ -124,6 +136,14 @@ export type IcmTournament = {
   tournament_id: string;
   name: string | null;
   buyin: number | null;
+  currency: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  n_hands: number;
+  finish_position: number | null;
+  prize: number | null;
+  prize_type: "cash" | "ticket" | null;
+  prize_note: string | null;
   has_payouts: boolean;
 };
 
@@ -171,6 +191,25 @@ export const icmApi = {
     request(`/api/icm/tournaments/${site}/${tournamentId}/payouts`, {
       method: "PUT",
       body: JSON.stringify({ prizes }),
+    }),
+  setTournamentName: (site: string, tournamentId: string, name: string) =>
+    request(`/api/icm/tournaments/${site}/${tournamentId}/name`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  setTournamentResult: (
+    site: string,
+    tournamentId: string,
+    payload: {
+      finish_position: number | null;
+      prize: number | null;
+      prize_type?: "cash" | "ticket" | null;
+      prize_note?: string | null;
+    },
+  ) =>
+    request(`/api/icm/tournaments/${site}/${tournamentId}/result`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
     }),
   spots: (params: {
     site: string;

@@ -22,6 +22,7 @@ import { Route as PushFoldRouteImport } from './routes/push-fold'
 import { Route as ReplayerRouteImport } from './routes/replayer'
 import { Route as SessoesRouteImport } from './routes/sessoes'
 import { Route as TagsRouteImport } from './routes/tags'
+import { Route as TorneiosRouteImport } from './routes/torneios'
 import { Route as PushFoldIndexRouteImport } from './routes/push-fold.index'
 import { Route as PushFoldTreinarRouteImport } from './routes/push-fold.treinar'
 
@@ -90,6 +91,11 @@ const TagsRoute = TagsRouteImport.update({
   path: '/tags',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TorneiosRoute = TorneiosRouteImport.update({
+  id: '/torneios',
+  path: '/torneios',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PushFoldIndexRoute = PushFoldIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -115,6 +121,7 @@ export interface FileRoutesByFullPath {
   '/replayer': typeof ReplayerRoute
   '/sessoes': typeof SessoesRoute
   '/tags': typeof TagsRoute
+  '/torneios': typeof TorneiosRoute
   '/push-fold/treinar': typeof PushFoldTreinarRoute
   '/push-fold/': typeof PushFoldIndexRoute
 }
@@ -131,6 +138,7 @@ export interface FileRoutesByTo {
   '/replayer': typeof ReplayerRoute
   '/sessoes': typeof SessoesRoute
   '/tags': typeof TagsRoute
+  '/torneios': typeof TorneiosRoute
   '/push-fold/treinar': typeof PushFoldTreinarRoute
   '/push-fold': typeof PushFoldIndexRoute
 }
@@ -149,6 +157,7 @@ export interface FileRoutesById {
   '/replayer': typeof ReplayerRoute
   '/sessoes': typeof SessoesRoute
   '/tags': typeof TagsRoute
+  '/torneios': typeof TorneiosRoute
   '/push-fold/treinar': typeof PushFoldTreinarRoute
   '/push-fold/': typeof PushFoldIndexRoute
 }
@@ -168,6 +177,7 @@ export interface FileRouteTypes {
     | '/replayer'
     | '/sessoes'
     | '/tags'
+    | '/torneios'
     | '/push-fold/treinar'
     | '/push-fold/'
   fileRoutesByTo: FileRoutesByTo
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/replayer'
     | '/sessoes'
     | '/tags'
+    | '/torneios'
     | '/push-fold/treinar'
     | '/push-fold'
   id:
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/replayer'
     | '/sessoes'
     | '/tags'
+    | '/torneios'
     | '/push-fold/treinar'
     | '/push-fold/'
   fileRoutesById: FileRoutesById
@@ -219,6 +231,7 @@ export interface RootRouteChildren {
   ReplayerRoute: typeof ReplayerRoute
   SessoesRoute: typeof SessoesRoute
   TagsRoute: typeof TagsRoute
+  TorneiosRoute: typeof TorneiosRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -314,6 +327,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TagsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/torneios': {
+      id: '/torneios'
+      path: '/torneios'
+      fullPath: '/torneios'
+      preLoaderRoute: typeof TorneiosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/push-fold/': {
       id: '/push-fold/'
       path: '/'
@@ -359,6 +379,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReplayerRoute: ReplayerRoute,
   SessoesRoute: SessoesRoute,
   TagsRoute: TagsRoute,
+  TorneiosRoute: TorneiosRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

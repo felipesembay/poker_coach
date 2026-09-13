@@ -290,13 +290,14 @@ def insert_hand(conn: PGConnection, h: Hand) -> bool:
     return True
 
 
-def set_result(conn, site: str, tournament_id: str, position: int, prize: float,
-                prize_type: str = "cash", prize_note: str | None = None,
+def set_result(conn, site: str, tournament_id: str, position: int | None, prize: float | None,
+                prize_type: str | None = None, prize_note: str | None = None,
                 name: str | None = None, buyin: float | None = None,
                 currency: str | None = None, date_iso: str | None = None):
     """Registra o resultado de um torneio. prize_type: 'cash' ou 'ticket'
-    (em satélites o prêmio costuma ser um bilhete — `prize` é o valor em
-    $ real ou estimado, `prize_note` a descrição livre).
+    — None quando ainda não foi marcado (não presume "cash": em freeroll/
+    satélite o prêmio costuma ser ticket, o que muda ROI/ITM). `prize` é o
+    valor em $ real ou estimado, `prize_note` a descrição livre.
 
     Upsert: se o torneio já existe (normalmente porque a hand history foi
     importada), só atualiza o resultado — `name`/`buyin`/`date_iso`, se
@@ -412,6 +413,19 @@ def get_payouts(conn: PGConnection, site: str, tournament_id: str) -> list[float
         (site, tournament_id),
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def set_tournament_name(conn: PGConnection, site: str, tournament_id: str, name: str) -> None:
+    """Só o nome — a hand history não trás isso (só o ID), então o
+    vínculo nome<->ID é sempre manual (ex.: olhando a lista de torneios
+    do site). Não usa `set_result` porque esse exige position/prize e
+    sobrescreveria um resultado real já lançado."""
+    conn.execute(
+        """INSERT INTO tournaments (site, tournament_id, name)
+           VALUES (?,?,?)
+           ON CONFLICT(site, tournament_id) DO UPDATE SET name = excluded.name""",
+        (site, tournament_id, name),
+    )
 
 
 def tournaments_with_payouts(conn: PGConnection) -> list[tuple]:

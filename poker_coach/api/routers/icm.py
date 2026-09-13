@@ -33,7 +33,15 @@ class TournamentOut(BaseModel):
     tournament_id: str
     name: str | None
     buyin: float | None
-    has_payouts: bool
+    currency: str | None = None
+    first_seen: str | None = None  # timestamp da 1ª mão importada desse torneio
+    last_seen: str | None = None   # timestamp da última — proxy de "quando acabou"
+    n_hands: int = 0
+    finish_position: int | None = None  # colocação do hero — não vem da hand history
+    prize: float | None = None          # prêmio do hero — idem, sempre manual
+    prize_type: str | None = None
+    prize_note: str | None = None       # anotação livre (ex.: "classifiquei via satélite")
+    has_payouts: bool = False  # estrutura completa de premiação (todas as colocações) configurada
 
 
 @router.get("/tournaments", response_model=list[TournamentOut])
@@ -41,15 +49,25 @@ def list_tournaments():
     conn = _conn()
     try:
         rows = conn.execute(
-            """SELECT t.site, t.tournament_id, t.name, t.buyin,
+            """SELECT t.site, t.tournament_id, t.name, t.buyin, t.currency,
+                      t.first_seen, t.last_seen,
+                      (SELECT COUNT(*) FROM hands h
+                        WHERE h.site = t.site AND h.tournament_id = t.tournament_id) AS n_hands,
+                      t.finish_position, t.prize, t.prize_type, t.prize_note,
                       EXISTS(SELECT 1 FROM payouts p WHERE p.site=t.site
                              AND p.tournament_id=t.tournament_id) AS has_payouts
                FROM tournaments t
                WHERE t.tournament_id IN (SELECT DISTINCT tournament_id FROM hands)
                ORDER BY t.first_seen DESC"""
         ).fetchall()
-        return [TournamentOut(site=s, tournament_id=tid, name=n, buyin=b, has_payouts=hp)
-                for s, tid, n, b, hp in rows]
+        return [
+            TournamentOut(
+                site=s, tournament_id=tid, name=n, buyin=b, currency=cur,
+                first_seen=fs, last_seen=ls, n_hands=nh,
+                finish_position=fp, prize=pz, prize_type=pt, prize_note=pnote, has_payouts=hp,
+            )
+            for s, tid, n, b, cur, fs, ls, nh, fp, pz, pt, pnote, hp in rows
+        ]
     finally:
         conn.close()
 
@@ -74,6 +92,49 @@ def set_payouts(site: str, tournament_id: str, payload: PayoutsIn):
         dbm.set_payouts(conn, site, tournament_id, payload.prizes)
         conn.commit()
         return {"ok": True, "prizes": payload.prizes}
+    finally:
+        conn.close()
+
+
+class TournamentNameIn(BaseModel):
+    name: str
+
+
+@router.put("/tournaments/{site}/{tournament_id}/name")
+def set_tournament_name(site: str, tournament_id: str, payload: TournamentNameIn):
+    """A hand history só trás o ID do torneio (ver cabeçalho "MTT
+    Tournament #..."), nunca o nome — esse vínculo é sempre preenchido
+    à mão, olhando a lista de torneios do site."""
+    conn = _conn()
+    try:
+        dbm.set_tournament_name(conn, site, tournament_id, payload.name)
+        conn.commit()
+        return {"ok": True, "name": payload.name}
+    finally:
+        conn.close()
+
+
+class TournamentResultIn(BaseModel):
+    finish_position: int | None = None  # colocação do hero (None = limpa o campo)
+    prize: float | None = None          # prêmio do hero em $ (None = limpa o campo)
+    # None = "não marcado ainda" — sem isso o backend chutava "cash" pra
+    # todo mundo mesmo sem o usuário escolher nada (impacta ROI/ITM em
+    # freerolls e satélites, onde o prêmio costuma ser ticket, não $).
+    prize_type: Literal["cash", "ticket"] | None = None
+    prize_note: str | None = None
+
+
+@router.put("/tournaments/{site}/{tournament_id}/result")
+def set_tournament_result(site: str, tournament_id: str, payload: TournamentResultIn):
+    """Colocação/prêmio DO HERO nesse torneio — diferente de /payouts (a
+    estrutura de premiação inteira, todas as colocações, usada pro
+    cálculo de ICM). A hand history não trás nem um nem outro."""
+    conn = _conn()
+    try:
+        dbm.set_result(conn, site, tournament_id, payload.finish_position, payload.prize,
+                        prize_type=payload.prize_type, prize_note=payload.prize_note)
+        conn.commit()
+        return {"ok": True}
     finally:
         conn.close()
 
