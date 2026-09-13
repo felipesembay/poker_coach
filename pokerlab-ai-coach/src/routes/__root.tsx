@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
@@ -15,6 +15,8 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppSidebar } from "@/components/app-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
+import { statsApi } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 function NotFoundComponent() {
   return (
@@ -119,6 +121,29 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+function BankrollBadge() {
+  // Lucro real (torneios com resultado registrado) — não é "bankroll"
+  // de verdade (não temos saldo de conta), é o mesmo número de
+  // Lucro/ROI do Dashboard, só resumido pro header.
+  const { data } = useQuery({ queryKey: ["stats-overview"], queryFn: statsApi.overview });
+  const roi = data?.roi ?? null;
+  return (
+    <div className="num flex shrink-0 items-center gap-2 text-xs">
+      <span className="hidden text-muted-foreground sm:inline">Lucro</span>
+      <span
+        className={cn(
+          "rounded-md border border-border bg-card px-2 py-1 font-semibold",
+          roi == null && "text-muted-foreground",
+          roi != null && roi.profit >= 0 && "text-profit",
+          roi != null && roi.profit < 0 && "text-loss",
+        )}
+      >
+        {roi != null ? `${roi.profit >= 0 ? "+" : "-"}$${Math.abs(roi.profit).toFixed(2)}` : "—"}
+      </span>
+    </div>
+  );
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
@@ -137,12 +162,7 @@ function RootComponent() {
                   <Command className="size-3" />K
                 </span>
               </div>
-              <div className="num flex shrink-0 items-center gap-2 text-xs">
-                <span className="hidden text-muted-foreground sm:inline">Bankroll</span>
-                <span className="rounded-md border border-border bg-card px-2 py-1 font-semibold text-profit">
-                  $5.480
-                </span>
-              </div>
+              <BankrollBadge />
             </header>
             {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
             <main className="min-w-0 flex-1 px-3 py-5 sm:px-6 sm:py-7">

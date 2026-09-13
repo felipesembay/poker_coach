@@ -328,6 +328,21 @@ def profit_by_period(conn: sqlite3.Connection, period: str = "day") -> list[dict
     return [{"period": b, "profit": round(p or 0, 2), "tournaments": n} for b, p, n in rows]
 
 
+def net_bb_by_day(conn: sqlite3.Connection) -> list[dict]:
+    """Saldo em BB por dia — como profit_by_period(day), mas em fichas:
+    disponível pra qualquer mão importada, sem precisar de resultado de
+    torneio registrado. Base do gráfico de evolução "sempre disponível"
+    (lucro em $ depende de resultado, saldo em BB não)."""
+    rows = conn.execute(
+        """SELECT to_char(ts::timestamp, 'YYYY-MM-DD') AS day,
+                  SUM(CAST(hero_net_chips AS REAL) / bb) AS net_bb,
+                  COUNT(*) AS hands
+           FROM hands WHERE ts IS NOT NULL AND bb > 0
+           GROUP BY day ORDER BY day"""
+    ).fetchall()
+    return [{"date": d, "net_bb": round(n or 0, 1), "hands": c} for d, n, c in rows]
+
+
 def net_bb_by_hour(conn: sqlite3.Connection) -> list[dict]:
     """Saldo em BB por hora do dia (0-23) — disponível sem resultado
     registrado, e é o dado por trás de 'você joga melhor às 19h do que
@@ -354,6 +369,59 @@ def net_bb_by_weekday(conn: sqlite3.Connection) -> list[dict]:
            GROUP BY wd ORDER BY wd"""
     ).fetchall()
     return [{"weekday": names[wd], "net_bb": round(n or 0, 1), "hands": c} for wd, n, c in rows]
+
+
+def sessions_by_day(conn: sqlite3.Connection) -> list[dict]:
+    """Uma linha por (dia, site) — aproximação de "sessão de jogo" a
+    partir da hand history, que não tem log de sessão explícito (só
+    quando cada torneio começou/terminou). Mãos/duração/torneios vêm de
+    qualquer hand importada; lucro/ROI/ABI só contam torneios com
+    resultado registrado (senão não dá pra saber o prêmio)."""
+    t_rows = conn.execute(
+        """SELECT to_char(first_seen::timestamp, 'YYYY-MM-DD') AS day, site,
+                  COUNT(*) AS tournaments, SUM(buyin) AS invested_all,
+                  SUM(CASE WHEN finish_position IS NOT NULL THEN buyin ELSE 0 END) AS invested,
+                  SUM(CASE WHEN finish_position IS NOT NULL THEN COALESCE(prize, 0) ELSE 0 END) AS won,
+                  SUM(CASE WHEN finish_position IS NOT NULL THEN 1 ELSE 0 END) AS with_result
+           FROM tournaments WHERE first_seen IS NOT NULL
+           GROUP BY day, site"""
+    ).fetchall()
+
+    h_rows = conn.execute(
+        """SELECT site, tournament_id, MIN(ts) AS t_start, MAX(ts) AS t_end, COUNT(*) AS hands
+           FROM hands WHERE ts IS NOT NULL
+           GROUP BY site, tournament_id"""
+    ).fetchall()
+
+    # Duração/mãos agregadas por (dia, site) a partir do início de cada
+    # torneio naquele dia — mesma lógica de hours_played(), só que
+    # quebrada por dia em vez de somada tudo junto.
+    per_day_site: dict[tuple[str, str], dict] = {}
+    for site, _tid, t_start, t_end, hands in h_rows:
+        a, b = _parse_ts(t_start), _parse_ts(t_end)
+        if not a:
+            continue
+        key = (a.date().isoformat(), site)
+        agg = per_day_site.setdefault(key, {"hands": 0, "duration": dt.timedelta()})
+        agg["hands"] += hands
+        if b and b > a:
+            agg["duration"] += b - a
+
+    out = []
+    for day, site, n_t, invested_all, invested, won, with_result in t_rows:
+        agg = per_day_site.get((day, site), {"hands": 0, "duration": dt.timedelta()})
+        profit = round(won - invested, 2) if with_result else None
+        out.append({
+            "date": day, "site": site, "tournaments": n_t,
+            "hands": agg["hands"],
+            "duration_min": round(agg["duration"].total_seconds() / 60),
+            "profit": profit,
+            "roi_pct": round(profit / invested * 100, 1) if profit is not None and invested else None,
+            "abi": round(invested_all / n_t, 2) if n_t else None,
+            "with_result": with_result,
+        })
+    out.sort(key=lambda r: r["date"], reverse=True)
+    return out
 
 
 def profit_by_buyin(conn: sqlite3.Connection) -> list[dict]:

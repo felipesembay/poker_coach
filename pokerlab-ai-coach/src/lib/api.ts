@@ -394,6 +394,104 @@ export const favoritesApi = {
   list: () => request<Favorite[]>("/api/favorites"),
 };
 
+// ---------------- Estatísticas (Dashboard / Sessões / Estatísticas) ----------------
+// Fininho sobre poker_coach/stats.py — o MESMO módulo usado pelas páginas
+// Streamlit em app_pages/*.py. Lucro/ROI/ITM/ABI só existem pra torneios
+// com resultado registrado (posição final + prêmio); o resto (saldo em
+// BB, VPIP/PFR, horas jogadas) vem 100% da hand history.
+
+export type RoiStats = {
+  tournaments: number;
+  invested: number;
+  won: number;
+  profit: number;
+  roi_pct: number;
+  itm_pct: number;
+  abi: number;
+};
+
+export type OverviewStats = {
+  hands: number;
+  tournaments: number;
+  vpip_pct: number;
+  pfr_pct: number;
+  net_bb: number;
+  hours_played: number;
+  roi: RoiStats | null; // null = nenhum torneio com resultado registrado ainda
+};
+
+export type PeriodProfit = { period: string; profit: number; tournaments: number };
+export type DayNetBb = { date: string; net_bb: number; hands: number };
+export type HourNetBb = { hour: number; net_bb: number; hands: number };
+export type WeekdayNetBb = { weekday: string; net_bb: number; hands: number };
+export type BuyinProfit = {
+  buyin: number;
+  tournaments: number;
+  profit: number;
+  roi_pct: number | null;
+  itm_pct: number | null;
+};
+export type PositionStat = {
+  position: string;
+  spots: number;
+  vpip_pct: number;
+  pfr_pct: number;
+  net_bb: number;
+};
+export type StackBucketStat = {
+  bucket: string;
+  spots: number;
+  fold_pct: number | null;
+  push_pct: number | null;
+  call_pct: number | null;
+  net_bb: number;
+};
+export type CashTicketSummary = {
+  cash: { count: number; total: number };
+  ticket: { count: number; total: number };
+};
+export type SatelliteRow = {
+  torneio: string;
+  site: string;
+  buyin: number | null;
+  converteu: "sim" | "não";
+  valor_estimado: number | null;
+  nota: string;
+  data: string | null;
+};
+export type SatellitesSummary = {
+  attempts: number;
+  converted: number;
+  pct: number | null;
+  rows: SatelliteRow[];
+};
+export type SessionRow = {
+  date: string;
+  site: string;
+  tournaments: number;
+  hands: number;
+  duration_min: number;
+  profit: number | null;
+  roi_pct: number | null;
+  abi: number | null;
+  with_result: number;
+};
+
+export const statsApi = {
+  overview: () => request<OverviewStats>("/api/stats/overview"),
+  profitByPeriod: (period: "day" | "week" | "month" = "day") =>
+    request<PeriodProfit[]>(`/api/stats/profit-by-period${qs({ period })}`),
+  netBbByDay: () => request<DayNetBb[]>("/api/stats/net-bb-by-day"),
+  netBbByHour: () => request<HourNetBb[]>("/api/stats/net-bb-by-hour"),
+  netBbByWeekday: () => request<WeekdayNetBb[]>("/api/stats/net-bb-by-weekday"),
+  profitByBuyin: () => request<BuyinProfit[]>("/api/stats/profit-by-buyin"),
+  position: () => request<PositionStat[]>("/api/stats/position"),
+  stackBuckets: () => request<StackBucketStat[]>("/api/stats/stack-buckets"),
+  cashVsTicket: () => request<CashTicketSummary>("/api/stats/cash-vs-ticket"),
+  satellites: () => request<SatellitesSummary>("/api/stats/satellites"),
+  sessions: () => request<SessionRow[]>("/api/stats/sessions"),
+};
+
 // ---------------- Importação ----------------
 
 export type ImportFileResult = {
