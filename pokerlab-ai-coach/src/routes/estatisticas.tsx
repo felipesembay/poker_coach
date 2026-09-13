@@ -1,13 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
-  PolarAngleAxis,
-  PolarGrid,
-  Radar,
-  RadarChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -16,16 +14,7 @@ import {
 
 import { PageHeader, Panel, StatCard } from "@/components/lab";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -34,7 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { leaks } from "@/lib/mock-data";
+import { pushfoldApi, statsApi } from "@/lib/api";
 
 export const Route = createFileRoute("/estatisticas")({
   head: () => ({
@@ -43,46 +32,17 @@ export const Route = createFileRoute("/estatisticas")({
       {
         name: "description",
         content:
-          "Estatísticas avançadas por posição, street e stack, com detecção automática de leaks.",
+          "Estatísticas reais por posição e stack, com leaks de push/fold detectados pelo motor de Nash.",
       },
       { property: "og:title", content: "Estatísticas — PokerLab" },
       {
         property: "og:description",
-        content: "VPIP, PFR, 3-bet, steal, WTSD e leaks detectados automaticamente.",
+        content: "VPIP, PFR e EV perdido por posição — tudo derivado das suas mãos importadas.",
       },
     ],
   }),
   component: StatsPage,
 });
-
-const byPosition = [
-  { pos: "UTG", vpip: 14, pfr: 12 },
-  { pos: "HJ", vpip: 18, pfr: 16 },
-  { pos: "CO", vpip: 24, pfr: 21 },
-  { pos: "BTN", vpip: 36, pfr: 33 },
-  { pos: "SB", vpip: 28, pfr: 22 },
-  { pos: "BB", vpip: 31, pfr: 11 },
-];
-
-const radar = [
-  { metric: "Preflop", you: 82, field: 66 },
-  { metric: "Push/Fold", you: 91, field: 71 },
-  { metric: "ICM", you: 84, field: 68 },
-  { metric: "Postflop", you: 74, field: 70 },
-  { metric: "Bluffs", you: 68, field: 62 },
-  { metric: "Hero Calls", you: 79, field: 64 },
-];
-
-const core = [
-  { label: "VPIP", value: "22,4%", hint: "Referência: 21–25%" },
-  { label: "PFR", value: "18,9%", hint: "Referência: 17–21%" },
-  { label: "3-Bet", value: "6,2%", hint: "Baixo para MTT moderno" },
-  { label: "Steal BTN", value: "42,0%", hint: "Bem calibrado" },
-  { label: "Fold vs Steal", value: "58,1%", hint: "Levemente alto" },
-  { label: "WTSD", value: "26,7%", hint: "Referência: 25–28%" },
-  { label: "WSD", value: "51,2%", hint: "Sólido" },
-  { label: "AF", value: "2,4", hint: "Agressão equilibrada" },
-];
 
 const axis = {
   stroke: "var(--muted-foreground)",
@@ -99,165 +59,245 @@ const tooltipStyle = {
   fontFamily: "var(--font-mono)",
 };
 
+// Bucket arbitrário sobre EV perdido (BB) — mesmo espírito do `risk`
+// bucket de ICM (poker_coach.icm): não é escala padrão da indústria,
+// só pra colorir a tabela por gravidade relativa.
+function severity(evLost: number): "Alto" | "Médio" | "Baixo" {
+  if (evLost >= 30) return "Alto";
+  if (evLost >= 8) return "Médio";
+  return "Baixo";
+}
+
 function StatsPage() {
+  const overviewQ = useQuery({ queryKey: ["stats-overview"], queryFn: statsApi.overview });
+  const positionQ = useQuery({ queryKey: ["stats-position"], queryFn: statsApi.position });
+  const stackQ = useQuery({ queryKey: ["stats-stack-buckets"], queryFn: statsApi.stackBuckets });
+  const pfSummaryQ = useQuery({
+    queryKey: ["pushfold-summary-default"],
+    queryFn: () => pushfoldApi.summary(),
+  });
+
+  const [search, setSearch] = useState("");
+
+  const ov = overviewQ.data;
+  const positions = positionQ.data ?? [];
+  const stacks = (stackQ.data ?? []).filter((s) => s.spots > 0);
+
+  const btn = positions.find((p) => p.position === "BTN");
+
+  const leakRows = useMemo(() => {
+    const byPos = pfSummaryQ.data?.by_position ?? {};
+    const rows = Object.entries(byPos).map(([position, d]) => ({
+      position,
+      spots: d.spots,
+      leaks: d.leaks,
+      evLost: d.ev_lost_bb,
+      leakPct: d.spots ? Math.round((d.leaks / d.spots) * 100) : 0,
+    }));
+    rows.sort((a, b) => b.evLost - a.evLost);
+    const q = search.trim().toLowerCase();
+    return q ? rows.filter((r) => r.position.toLowerCase().includes(q)) : rows;
+  }, [pfSummaryQ.data, search]);
+
   return (
     <div className="space-y-5">
       <PageHeader
         title="Estatísticas"
-        description="Amostra de 8.923 mãos · comparativo com o campo de micro/low stakes"
-        actions={
-          <Select defaultValue="all">
-            <SelectTrigger className="h-9 w-[170px] text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas as fases</SelectItem>
-              <SelectItem value="early">Fase inicial</SelectItem>
-              <SelectItem value="mid">Fase média</SelectItem>
-              <SelectItem value="bubble">Bolha</SelectItem>
-              <SelectItem value="ft">Mesa final</SelectItem>
-            </SelectContent>
-          </Select>
+        description={
+          ov
+            ? `Amostra de ${ov.hands.toLocaleString("pt-BR")} mãos · leaks de push/fold em stack 5–25 BB`
+            : "Carregando…"
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
-        {core.map((c) => (
-          <StatCard key={c.label} label={c.label} value={c.value} hint={c.hint} />
-        ))}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="VPIP" value={ov ? `${ov.vpip_pct}%` : "—"} />
+        <StatCard label="PFR" value={ov ? `${ov.pfr_pct}%` : "—"} />
+        <StatCard
+          label="VPIP no BTN"
+          value={btn ? `${btn.vpip_pct}%` : "—"}
+          hint={btn ? `${btn.spots} mãos` : "Sem dado"}
+        />
+        <StatCard
+          label="Spots push/fold analisados"
+          value={pfSummaryQ.data ? String(pfSummaryQ.data.spots) : "—"}
+          hint="Stack 5–25 BB"
+        />
+        <StatCard
+          label="Leaks (decisão ≠ Nash)"
+          value={pfSummaryQ.data ? String(pfSummaryQ.data.leak_spots) : "—"}
+          tone="loss"
+          hint={
+            pfSummaryQ.data
+              ? `${Math.round((pfSummaryQ.data.leak_spots / pfSummaryQ.data.spots) * 100)}% dos spots`
+              : "Sem dado"
+          }
+        />
+        <StatCard
+          label="EV perdido (push/fold)"
+          value={pfSummaryQ.data ? `-${pfSummaryQ.data.total_ev_lost_bb.toFixed(1)} BB` : "—"}
+          tone="loss"
+        />
+        <StatCard label="ITM" value={ov?.roi ? `${ov.roi.itm_pct}%` : "—"} />
+        <StatCard label="Torneios" value={ov ? String(ov.tournaments) : "—"} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <Panel
-          title="VPIP e PFR por posição"
-          subtitle="Percentual de mãos"
-          className="xl:col-span-2"
-        >
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel title="VPIP e PFR por posição" subtitle="Percentual de mãos">
           <div className="h-72 px-2 py-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byPosition}>
-                <CartesianGrid stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="pos" {...axis} />
-                <YAxis {...axis} width={34} />
-                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "var(--accent)" }} />
-                <Bar dataKey="vpip" fill="var(--chart-1)" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="pfr" fill="var(--chart-3)" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {positions.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={positions}>
+                  <CartesianGrid stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="position" {...axis} />
+                  <YAxis {...axis} width={34} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "var(--accent)" }} />
+                  <Bar dataKey="vpip_pct" name="VPIP" fill="var(--chart-1)" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="pfr_pct" name="PFR" fill="var(--chart-3)" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="grid h-full place-items-center text-sm text-muted-foreground">
+                {positionQ.isLoading ? "Carregando…" : "Sem mãos com posição identificada ainda."}
+              </div>
+            )}
           </div>
         </Panel>
 
-        <Panel title="Perfil técnico" subtitle="Você vs campo">
+        <Panel
+          title="EV perdido por posição (push/fold)"
+          subtitle="Nash real — quanto sua decisão custou vs. a ótima"
+        >
           <div className="h-72 px-2 py-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={radar} outerRadius="72%">
-                <PolarGrid stroke="var(--border)" />
-                <PolarAngleAxis
-                  dataKey="metric"
-                  tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
-                />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Radar
-                  dataKey="field"
-                  stroke="var(--chart-5)"
-                  fill="var(--chart-5)"
-                  fillOpacity={0.12}
-                />
-                <Radar
-                  dataKey="you"
-                  stroke="var(--chart-1)"
-                  fill="var(--chart-1)"
-                  fillOpacity={0.25}
-                />
-              </RadarChart>
-            </ResponsiveContainer>
+            {leakRows.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={leakRows}>
+                  <CartesianGrid stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="position" {...axis} />
+                  <YAxis {...axis} width={40} />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    cursor={{ fill: "var(--accent)" }}
+                    formatter={(v: number) => [`-${v} BB`, "EV perdido"]}
+                  />
+                  <Bar dataKey="evLost" radius={[3, 3, 0, 0]} fill="var(--loss)" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="grid h-full place-items-center text-sm text-muted-foreground">
+                {pfSummaryQ.isLoading ? "Carregando…" : "Sem spots de push/fold no range 5–25 BB."}
+              </div>
+            )}
           </div>
         </Panel>
       </div>
 
       <Panel
-        title="Leaks detectados automaticamente"
-        subtitle="Ordenados por EV perdido"
+        title="Leaks de push/fold por posição"
+        subtitle="Ordenado por EV perdido · motor de Nash (poker_coach.pushfold), não é heurística"
         actions={
-          <div className="flex items-center gap-2">
-            <Input placeholder="Pesquisar leak…" className="h-8 w-40 text-xs" />
-            <Button variant="outline" size="sm">
-              Criar plano de estudo
-            </Button>
-          </div>
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Pesquisar posição…"
+            className="h-8 w-40 text-xs"
+          />
         }
       >
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead>Leak</TableHead>
+                <TableHead>Posição</TableHead>
                 <TableHead>Severidade</TableHead>
                 <TableHead className="text-right">EV perdido</TableHead>
-                <TableHead className="text-right">Ocorrências</TableHead>
-                <TableHead className="w-40">Correção</TableHead>
+                <TableHead className="text-right">Decisões erradas</TableHead>
+                <TableHead className="text-right">Spots</TableHead>
+                <TableHead className="text-right">Taxa de leak</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {leaks.map((l) => (
-                <TableRow key={l.name}>
-                  <TableCell className="text-sm">{l.name}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={
-                        l.severity === "Alto"
-                          ? "text-loss"
-                          : l.severity === "Médio"
-                            ? "text-foreground"
-                            : "text-muted-foreground"
-                      }
-                    >
-                      {l.severity}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="num text-right text-xs text-loss">{l.evLost}</TableCell>
-                  <TableCell className="num text-right text-xs">{l.occurrences}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Progress value={Math.max(6, 50 + l.trend * 4)} className="h-1.5" />
-                      <span className="num text-[11px] text-muted-foreground">
-                        {l.trend > 0 ? "+" : ""}
-                        {l.trend}%
-                      </span>
-                    </div>
+              {pfSummaryQ.isLoading && (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
+                    Carregando…
                   </TableCell>
                 </TableRow>
-              ))}
+              )}
+              {!pfSummaryQ.isLoading && leakRows.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
+                    Nenhum leak encontrado.
+                  </TableCell>
+                </TableRow>
+              )}
+              {leakRows.map((r) => {
+                const sev = severity(r.evLost);
+                return (
+                  <TableRow key={r.position}>
+                    <TableCell className="text-sm font-medium">{r.position}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={
+                          sev === "Alto"
+                            ? "text-loss"
+                            : sev === "Médio"
+                              ? "text-foreground"
+                              : "text-muted-foreground"
+                        }
+                      >
+                        {sev}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="num text-right text-xs text-loss">
+                      -{r.evLost.toFixed(1)} BB
+                    </TableCell>
+                    <TableCell className="num text-right text-xs">{r.leaks}</TableCell>
+                    <TableCell className="num text-right text-xs text-muted-foreground">
+                      {r.spots}
+                    </TableCell>
+                    <TableCell className="num text-right text-xs text-muted-foreground">
+                      {r.leakPct}%
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
       </Panel>
 
-      <Panel title="EV por faixa de stack" subtitle="BB/100 ganho ou perdido">
+      <Panel
+        title="Saldo em BB por faixa de stack"
+        subtitle="Fold/push/call preflop e resultado por faixa de stack efetivo"
+      >
         <div className="h-56 px-2 py-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={[
-                { range: "< 10 BB", ev: 2.1 },
-                { range: "10–15 BB", ev: -3.4 },
-                { range: "15–20 BB", ev: -1.8 },
-                { range: "20–30 BB", ev: 1.2 },
-                { range: "30–50 BB", ev: 2.8 },
-                { range: "50+ BB", ev: 0.6 },
-              ]}
-            >
-              <CartesianGrid stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="range" {...axis} />
-              <YAxis {...axis} width={38} />
-              <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "var(--accent)" }} />
-              <Bar dataKey="ev" radius={[3, 3, 0, 0]}>
-                {[2.1, -3.4, -1.8, 1.2, 2.8, 0.6].map((v, i) => (
-                  <Cell key={i} fill={v >= 0 ? "var(--profit)" : "var(--loss)"} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {stacks.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stacks}>
+                <CartesianGrid stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="bucket" {...axis} />
+                <YAxis {...axis} width={44} />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "var(--accent)" }} />
+                <Bar dataKey="net_bb" radius={[3, 3, 0, 0]}>
+                  {stacks.map((s) => (
+                    <Cell key={s.bucket} fill={s.net_bb >= 0 ? "var(--profit)" : "var(--loss)"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="grid h-full place-items-center text-sm text-muted-foreground">
+              {stackQ.isLoading ? "Carregando…" : "Sem dado ainda."}
+            </div>
+          )}
         </div>
       </Panel>
     </div>

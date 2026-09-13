@@ -123,7 +123,9 @@ function SessionsPage() {
           label="Lucro do período"
           value={withResult.length ? `$${totalProfit.toFixed(2)}` : "—"}
           delta={
-            withResult.length ? `${withResult.length} sessões c/ resultado` : "Sem resultado registrado"
+            withResult.length
+              ? `${withResult.length} sessões c/ resultado`
+              : "Sem resultado registrado"
           }
           tone={withResult.length ? (totalProfit >= 0 ? "profit" : "loss") : "neutral"}
         />
@@ -131,20 +133,30 @@ function SessionsPage() {
           label="Sessões positivas"
           value={withResult.length ? `${positiveCount} / ${withResult.length}` : "—"}
           delta={
-            withResult.length ? `${Math.round((positiveCount / withResult.length) * 100)}%` : undefined
+            withResult.length
+              ? `${Math.round((positiveCount / withResult.length) * 100)}%`
+              : "Sem resultado registrado"
           }
           tone="neutral"
         />
         <StatCard
           label="Tempo total"
           value={fmtDuration(totalMinutes)}
-          delta={filtered.length ? `${fmtDuration(Math.round(totalMinutes / filtered.length))} / sessão` : undefined}
+          delta={
+            filtered.length
+              ? `${fmtDuration(Math.round(totalMinutes / filtered.length))} / sessão`
+              : "Sem sessão"
+          }
           tone="neutral"
         />
         <StatCard
           label="Melhor sessão"
           value={bestSession ? `+$${(bestSession.profit ?? 0).toFixed(2)}` : "—"}
-          delta={bestSession ? `${fmtDateShort(bestSession.date)} · ${bestSession.site}` : "Sem resultado registrado"}
+          delta={
+            bestSession
+              ? `${fmtDateShort(bestSession.date)} · ${bestSession.site}`
+              : "Sem resultado registrado"
+          }
           tone={bestSession ? "profit" : "neutral"}
         />
       </div>
@@ -208,14 +220,20 @@ function SessionsPage() {
             <TableBody>
               {sessionsQ.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={9}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     Carregando…
                   </TableCell>
                 </TableRow>
               )}
               {!sessionsQ.isLoading && filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={9}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     Nenhuma sessão encontrada com esses filtros.
                   </TableCell>
                 </TableRow>
