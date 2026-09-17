@@ -23,76 +23,18 @@ import random
 from functools import lru_cache
 from pathlib import Path
 
-RANKS = "23456789TJQKA"
-RANK_VALUE = {r: i for i, r in enumerate(RANKS, start=2)}
-SUITS = "shdc"
+from ..handeval import (  # noqa: F401 — reexportados por compatibilidade
+    RANKS,
+    RANK_VALUE,
+    SUITS,
+    best_of_7,
+    full_deck,
+    hand_rank5,
+    parse_card,
+    parse_hand,
+)
 
 CACHE_PATH = Path(__file__).with_name("ranking_cache.json")
-
-
-def parse_card(s: str) -> tuple[int, str]:
-    s = s.strip()
-    rank, suit = s[0].upper(), s[1].lower()
-    return RANK_VALUE[rank], suit
-
-
-def parse_hand(s: str) -> list[tuple[int, str]]:
-    """'Kh 2h' / 'Kh2h' -> [(13,'h'), (2,'h')]"""
-    s = s.replace(",", " ").strip()
-    parts = s.split() if " " in s else [s[i:i + 2] for i in range(0, len(s), 2)]
-    return [parse_card(p) for p in parts]
-
-
-def full_deck() -> list[tuple[int, str]]:
-    return [(r, s) for r in RANK_VALUE.values() for s in SUITS]
-
-
-def _check_straight(ranks5: list[int]) -> tuple[bool, int]:
-    s = set(ranks5)
-    if len(s) != 5:
-        return False, 0
-    if s == {14, 2, 3, 4, 5}:
-        return True, 5  # "roda": 5-alta
-    mx, mn = max(s), min(s)
-    if mx - mn == 4:
-        return True, mx
-    return False, 0
-
-
-def hand_rank5(cards: list[tuple[int, str]]) -> tuple:
-    """Retorna uma tupla comparável (maior = mão melhor)."""
-    ranks = sorted((r for r, _ in cards), reverse=True)
-    is_flush = len({s for _, s in cards}) == 1
-    is_straight, top = _check_straight(ranks)
-
-    counts: dict[int, int] = {}
-    for r in ranks:
-        counts[r] = counts.get(r, 0) + 1
-    groups = sorted(counts.items(), key=lambda kv: (-kv[1], -kv[0]))
-    pattern = tuple(c for _, c in groups)
-    ordered = tuple(r for r, _ in groups)
-
-    if is_straight and is_flush:
-        return (8, top)
-    if pattern == (4, 1):
-        return (7,) + ordered
-    if pattern == (3, 2):
-        return (6,) + ordered
-    if is_flush:
-        return (5,) + tuple(ranks)
-    if is_straight:
-        return (4, top)
-    if pattern == (3, 1, 1):
-        return (3,) + ordered
-    if pattern == (2, 2, 1):
-        return (2,) + ordered
-    if pattern == (2, 1, 1, 1):
-        return (1,) + ordered
-    return (0,) + tuple(ranks)
-
-
-def best_of_7(cards7: list[tuple[int, str]]) -> tuple:
-    return max(hand_rank5(list(c)) for c in itertools.combinations(cards7, 5))
 
 
 def _rng(seed: int | None) -> random.Random:
