@@ -165,7 +165,15 @@ def _draw_opponent_hand(
     Retorna None se não sobrou nenhuma combinação viável (ranges muito
     restritas colidindo com o board/hero/outros vilões)."""
     if opp.cards:
-        return opp.cards if not (set(opp.cards) & dead) else None
+        # Mão fixa já foi reivindicada/validada em `_validate_and_parse`
+        # (não colide com hero/board/dead_cards/outros vilões fixos) — ela
+        # PRÓPRIA faz parte do `dead` global, então checar contra `dead`
+        # aqui sempre daria colisão consigo mesma. Só valida contra o que
+        # foi sorteado nesse trial ATÉ AGORA para os vilões anteriores
+        # (passado em `dead` como `trial_dead`, que cresce a cada vilão) —
+        # na prática nunca vai colidir, porque `_validate_and_parse` já
+        # garante que vilões fixos não compartilham carta entre si.
+        return opp.cards
 
     if opp.range_classes:
         remaining_classes = list(opp.range_classes)

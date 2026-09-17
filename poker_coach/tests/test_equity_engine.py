@@ -56,6 +56,29 @@ def test_hand_vs_range_is_exact_for_small_range_and_matches_known_poker_math():
     assert total == pytest.approx(1.0)
 
 
+def test_multiway_monte_carlo_with_fixed_opponent_cards_does_not_self_collide():
+    # Regressão: um vilão de mão FIXA faz parte do conjunto "known"/"dead"
+    # (reivindicado em _validate_and_parse) — o sorteio Monte Carlo não
+    # pode checar a mão dele contra esse mesmo conjunto, ou colide consigo
+    # mesma e nenhum trial é válido. Preflop força o caminho Monte Carlo
+    # (5 cartas de board por sortear, espaço grande demais pra exato).
+    result = calculate_equity(
+        street="preflop",
+        hero_cards=["2h", "2d"],
+        board=[],
+        opponents=[
+            EquityOpponent(player_id="p1", cards=["9c", "Ac"]),
+            EquityOpponent(player_id="p2", cards=["Kc", "Ks"]),
+        ],
+        iterations=3000,
+        seed=1,
+    )
+    assert result.simulation_method == "monte_carlo"
+    assert result.iterations > 0
+    # 22 dominado por AA-vs-A9/KK — deve ficar bem atrás (~15-20% real).
+    assert 0.10 < result.hero_equity < 0.25
+
+
 def test_multiway_uses_monte_carlo_and_returns_valid_probabilities():
     result = calculate_equity(
         street="flop",

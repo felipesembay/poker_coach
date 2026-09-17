@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from poker_coach import db as dbm, replay  # noqa: E402
+from poker_coach import db as dbm, replay, replay_decision  # noqa: E402
 from poker_coach.pushfold import analyze as pf  # noqa: E402
 
 from ..deps import DSN  # noqa: E402
@@ -195,5 +195,150 @@ def get_hand(site: str, hand_id: str):
                 "SELECT favorite FROM hands WHERE site=? AND hand_id=?", (site, hand_id)
             ).fetchone()[0]),
         )
+    finally:
+        conn.close()
+
+
+# ---------------- Decision Analysis (Etapa 6 — Equity/Pot Odds/EV Contextual) ----------------
+#
+# Camada NOVA por cima do que já existe acima (painel_ia, escopo estrito
+# de abertura/facing-shove preflop). Cobre qualquer passo do hero em
+# qualquer street — classifica o contexto (context.py) e delega pro Nash
+# isolado OU pro EV contextual (equity + pot odds), nunca os dois juntos.
+# Ver poker_coach/replay_decision.py pra reconstrução do estado a partir
+# do ReplayHand já carregado por `replay.load`.
+
+class ContextOut(BaseModel):
+    context_type: str
+    recommended_model: str
+    reasoning: list[str]
+
+
+class NashDecisionOut(BaseModel):
+    recommendation: str
+    ev_push_bb: float
+    equity_vs_call_range: float
+    call_pct: float
+    effective_bb: float
+    pot_bb: float
+
+
+class DecisionEVOut(BaseModel):
+    action: str
+    applicable: bool
+    ev: float | None
+    note: str
+
+
+class EquityOut(BaseModel):
+    hero_equity: float
+    win_probability: float
+    tie_probability: float
+    loss_probability: float
+    outs: list[str]
+    turn_improvement_probability: float | None
+    river_improvement_probability: float | None
+    simulation_method: str
+    iterations: int
+    confidence_interval: tuple[float, float] | None
+    num_opponents: int
+    assumptions: list[str]
+
+
+class PotOddsOut(BaseModel):
+    pot_before_bet: float
+    villain_bet: float
+    hero_already_in: float
+    additional_money_in: float
+    hero_call_cost: float
+    pot_after_call: float
+    required_equity: float
+    pot_odds_ratio: str
+    facing: str
+    is_partial_call: bool
+    hero_stack_after_call: float | None
+    assumptions: list[str]
+
+
+class ContextualEVOut(BaseModel):
+    decisions: list[DecisionEVOut]
+    equity: EquityOut | None
+    pot_odds: PotOddsOut | None
+    model: str
+    assumptions: list[str]
+
+
+class DecisionAnalysisOut(BaseModel):
+    context: ContextOut
+    nash: NashDecisionOut | None
+    contextual: ContextualEVOut | None
+
+
+def _decision_analysis_out(analysis) -> DecisionAnalysisOut:
+    ctx = ContextOut(
+        context_type=analysis.context.context_type,
+        recommended_model=analysis.context.recommended_model,
+        reasoning=analysis.context.reasoning,
+    )
+    nash_out = None
+    if analysis.nash is not None:
+        n = analysis.nash
+        nash_out = NashDecisionOut(
+            recommendation=n.recommendation, ev_push_bb=n.ev_push_bb,
+            equity_vs_call_range=n.equity_vs_call_range, call_pct=n.call_pct,
+            effective_bb=n.effective_bb, pot_bb=n.pot_bb,
+        )
+    contextual_out = None
+    if analysis.contextual is not None:
+        c = analysis.contextual
+        equity_out = None
+        if c.equity is not None:
+            e = c.equity
+            equity_out = EquityOut(
+                hero_equity=e.hero_equity, win_probability=e.win_probability,
+                tie_probability=e.tie_probability, loss_probability=e.loss_probability,
+                outs=e.outs, turn_improvement_probability=e.turn_improvement_probability,
+                river_improvement_probability=e.river_improvement_probability,
+                simulation_method=e.simulation_method, iterations=e.iterations,
+                confidence_interval=e.confidence_interval, num_opponents=e.num_opponents,
+                assumptions=e.assumptions,
+            )
+        pot_odds_out = None
+        if c.pot_odds is not None:
+            p = c.pot_odds
+            pot_odds_out = PotOddsOut(
+                pot_before_bet=p.pot_before_bet, villain_bet=p.villain_bet,
+                hero_already_in=p.hero_already_in, additional_money_in=p.additional_money_in,
+                hero_call_cost=p.hero_call_cost, pot_after_call=p.pot_after_call,
+                required_equity=p.required_equity, pot_odds_ratio=p.pot_odds_ratio,
+                facing=p.facing, is_partial_call=p.is_partial_call,
+                hero_stack_after_call=p.hero_stack_after_call, assumptions=p.assumptions,
+            )
+        contextual_out = ContextualEVOut(
+            decisions=[
+                DecisionEVOut(action=d.action, applicable=d.applicable, ev=d.ev, note=d.note)
+                for d in c.decisions
+            ],
+            equity=equity_out, pot_odds=pot_odds_out, model=c.model, assumptions=c.assumptions,
+        )
+    return DecisionAnalysisOut(context=ctx, nash=nash_out, contextual=contextual_out)
+
+
+@router.get("/{site}/{hand_id}/decision/{step}", response_model=DecisionAnalysisOut)
+def get_decision(site: str, hand_id: str, step: int,
+                  equity_iterations: int | None = Query(None),
+                  equity_seed: int | None = Query(None)):
+    conn = _conn()
+    try:
+        rh = replay.load(conn, site, hand_id)
+        if rh is None:
+            raise HTTPException(404, "Mão não encontrada.")
+        try:
+            analysis = replay_decision.analyze_hero_step(
+                rh, step, equity_iterations=equity_iterations, equity_seed=equity_seed,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return _decision_analysis_out(analysis)
     finally:
         conn.close()

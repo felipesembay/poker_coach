@@ -341,6 +341,78 @@ export type ReplayHand = {
   favorite: boolean;
 };
 
+// ---------------- Decision Analysis (Etapa 6 — Equity/Pot Odds/EV contextual) ----------------
+//
+// Camada nova por cima do painel_ia acima (que só cobre abertura/facing-shove
+// preflop). Cobre qualquer passo do hero — ver poker_coach/context.py e
+// poker_coach/replay_decision.py.
+
+export type DecisionContext = {
+  context_type: string;
+  recommended_model: "pushfold_nash" | "contextual_ev" | "postflop_check_only";
+  reasoning: string[];
+};
+
+export type NashDecision = {
+  recommendation: "push" | "fold";
+  ev_push_bb: number;
+  equity_vs_call_range: number;
+  call_pct: number;
+  effective_bb: number;
+  pot_bb: number;
+};
+
+export type DecisionEV = {
+  action: "fold" | "call" | "push" | "check";
+  applicable: boolean;
+  ev: number | null;
+  note: string;
+};
+
+export type EquityResult = {
+  hero_equity: number;
+  win_probability: number;
+  tie_probability: number;
+  loss_probability: number;
+  outs: string[];
+  turn_improvement_probability: number | null;
+  river_improvement_probability: number | null;
+  simulation_method: "exact" | "monte_carlo";
+  iterations: number;
+  confidence_interval: [number, number] | null;
+  num_opponents: number;
+  assumptions: string[];
+};
+
+export type PotOddsResult = {
+  pot_before_bet: number;
+  villain_bet: number;
+  hero_already_in: number;
+  additional_money_in: number;
+  hero_call_cost: number;
+  pot_after_call: number;
+  required_equity: number;
+  pot_odds_ratio: string;
+  facing: "bet" | "raise" | "allin";
+  is_partial_call: boolean;
+  hero_stack_after_call: number | null;
+  assumptions: string[];
+};
+
+export type ContextualEV = {
+  decisions: DecisionEV[];
+  equity: EquityResult | null;
+  pot_odds: PotOddsResult | null;
+  model: string;
+  assumptions: string[];
+};
+
+export type DecisionAnalysis = {
+  context: DecisionContext;
+  nash: NashDecision | null;
+  contextual: ContextualEV | null;
+};
+
 export const replayerApi = {
   search: (
     params: {
@@ -362,6 +434,8 @@ export const replayerApi = {
     } = {},
   ) => request<HandSummary[]>(`/api/replayer/search${qs(params)}`),
   get: (site: string, handId: string) => request<ReplayHand>(`/api/replayer/${site}/${handId}`),
+  decision: (site: string, handId: string, step: number) =>
+    request<DecisionAnalysis>(`/api/replayer/${site}/${handId}/decision/${step}`),
 };
 
 // ---------------- Mãos / Tags / Favoritos ----------------
