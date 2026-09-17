@@ -14,6 +14,7 @@ import {
   Settings,
   Spade,
   Trophy,
+  AlertTriangle,
 } from "lucide-react";
 
 import {
@@ -45,6 +46,7 @@ const groups = [
     label: "Treino",
     items: [
       { title: "Push/Fold", url: "/push-fold", icon: Target },
+      { title: "Leak Finder", url: "/leaks", icon: AlertTriangle },
       { title: "ICM", url: "/icm", icon: Coins },
       { title: "Coach IA", url: "/coach", icon: Brain },
     ],

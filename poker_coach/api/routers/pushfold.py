@@ -103,6 +103,75 @@ def summary(bb_min: float = Query(5.0), bb_max: float = Query(25.0)):
                       total_ev_lost_bb=s["total_ev_lost_bb"], by_position=s["by_position"])
 
 
+# ── Leak Finder / heatmap Push/Fold ─────────────────────────────────────────
+# Mesma agregação (posição × faixa de stack) serve o Leak Finder (lista
+# ordenada por EV perdido) e o heatmap (grid) — ver
+# poker_coach/pushfold/analyze.py:leak_categories. Cache de processo
+# separado do de /spots e /summary porque inclui facing_shove também.
+_FACING_CACHE: dict[tuple, tuple[float, list]] = {}
+
+
+def _get_facing_analysis(bb_min: float, bb_max: float) -> list:
+    key = (round(bb_min, 2), round(bb_max, 2))
+    entry = _FACING_CACHE.get(key)
+    if entry:
+        cached_at, rows = entry
+        if time.monotonic() - cached_at < _CACHE_TTL:
+            return rows
+    conn = _conn()
+    try:
+        rows = pf.analyze_all_facing_shove(conn, bb_min=bb_min, bb_max=bb_max)
+    finally:
+        conn.close()
+    _FACING_CACHE[key] = (time.monotonic(), rows)
+    return rows
+
+
+class LeakCategoryOut(BaseModel):
+    category_key: str
+    decision_scope: Literal["open_shove", "facing_shove"]
+    position: str
+    stack_bucket: str
+    opportunities: int
+    incorrect: int
+    error_rate_pct: float | None
+    ev_lost_total_bb: float
+    ev_lost_avg_bb: float | None
+
+
+@router.get("/leaks", response_model=list[LeakCategoryOut])
+def leaks(bb_min: float = Query(1.0), bb_max: float = Query(25.0)):
+    open_rows = _get_analysis(bb_min, bb_max)
+    facing_rows = _get_facing_analysis(bb_min, bb_max)
+    return pf.leak_categories(open_rows, facing_rows)
+
+
+class LeakHandOut(BaseModel):
+    site: str
+    hand_id: str
+    tournament_id: str
+    decision_scope: Literal["open_shove", "facing_shove"]
+    position: str
+    effective_bb: float
+    hero_cards: str
+    action_taken: str
+    action_reference: str
+    ev_lost_bb: float
+
+
+@router.get("/leaks/hands", response_model=list[LeakHandOut])
+def leak_hands(
+    decision_scope: Literal["open_shove", "facing_shove"] = Query(...),
+    position: str = Query(...),
+    stack_bucket: str = Query(...),
+    bb_min: float = Query(1.0),
+    bb_max: float = Query(25.0),
+):
+    open_rows = _get_analysis(bb_min, bb_max)
+    facing_rows = _get_facing_analysis(bb_min, bb_max)
+    return pf.leak_category_hands(open_rows, facing_rows, decision_scope, position, stack_bucket)
+
+
 class RangeGridOut(BaseModel):
     effective_bb: float
     pot_bb: float

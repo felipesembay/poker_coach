@@ -12,10 +12,11 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from poker_coach import bankroll  # noqa: E402
 from poker_coach import db as dbm  # noqa: E402
 from poker_coach import stats  # noqa: E402
 
@@ -236,5 +237,100 @@ def sessions():
     conn = _conn()
     try:
         return stats.sessions_by_day(conn)
+    finally:
+        conn.close()
+
+
+# ---------------- Evolução de bankroll (BB / buy-ins / dinheiro) ----------------
+# Ver poker_coach/bankroll.py: BB sempre disponível (deriva das mãos),
+# buy-ins/dinheiro só somam torneios com resultado registrado. Dinheiro
+# nunca mistura moeda automaticamente — sem filtro de moeda explícito,
+# soma tudo (o frontend deve checar /currencies antes de decidir).
+
+BankrollUnit = Literal["bb", "money", "buyins"]
+
+
+class CurrencyOut(BaseModel):
+    currency: str
+    tournaments: int
+
+
+@router.get("/currencies", response_model=list[CurrencyOut])
+def currencies():
+    conn = _conn()
+    try:
+        return bankroll.distinct_currencies(conn)
+    finally:
+        conn.close()
+
+
+class BankrollPointOut(BaseModel):
+    period: str
+    value: float
+    cumulative: float
+    n: int
+
+
+@router.get("/bankroll-series", response_model=list[BankrollPointOut])
+def bankroll_series(unit: BankrollUnit = Query("bb"), currency: str | None = Query(None)):
+    conn = _conn()
+    try:
+        return bankroll.bankroll_series(conn, unit=unit, currency=currency)
+    finally:
+        conn.close()
+
+
+class DownswingOut(BaseModel):
+    unit: str
+    value: float
+    start: str | None
+    trough: str | None
+    recovery: str | None
+
+
+@router.get("/downswing", response_model=DownswingOut | None)
+def downswing(unit: BankrollUnit = Query("bb"), currency: str | None = Query(None)):
+    conn = _conn()
+    try:
+        return bankroll.downswing(conn, unit=unit, currency=currency)
+    finally:
+        conn.close()
+
+
+class SessionAverageOut(BaseModel):
+    unit: str
+    avg: float | None
+    n_sessions: int
+    n_excluded: int
+
+
+@router.get("/session-average", response_model=SessionAverageOut)
+def session_average(unit: BankrollUnit = Query("bb"), currency: str | None = Query(None)):
+    conn = _conn()
+    try:
+        return bankroll.session_average(conn, unit=unit, currency=currency)
+    finally:
+        conn.close()
+
+
+class NormalizedOut(BaseModel):
+    basis: str
+    unit: str
+    value: float | None
+    n: int
+    min_required: int
+    insufficient: bool
+    reason: str | None = None
+
+
+@router.get("/normalized", response_model=NormalizedOut)
+def normalized(basis: Literal["per_100_tournaments", "per_1000_hands"] = Query("per_100_tournaments"),
+               unit: BankrollUnit = Query("bb")):
+    conn = _conn()
+    try:
+        try:
+            return bankroll.normalized_result(conn, basis=basis, unit=unit)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
     finally:
         conn.close()

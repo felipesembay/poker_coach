@@ -143,11 +143,16 @@ function PushFoldPage() {
             : "Carregando…"
         }
         actions={
-          <Button size="sm" asChild>
-            <Link to="/push-fold/treinar">
-              <Target className="mr-1.5 size-3.5" /> Treinar
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/push-fold/heatmap">Heatmap por stack</Link>
+            </Button>
+            <Button size="sm" asChild>
+              <Link to="/push-fold/treinar">
+                <Target className="mr-1.5 size-3.5" /> Treinar
+              </Link>
+            </Button>
+          </div>
         }
       />
 

@@ -69,6 +69,49 @@ export const pushfoldApi = {
     request<RangeGrid>(`/api/pushfold/call-grid${qs(params)}`),
 };
 
+// ---------------- Leak Finder / heatmap Push/Fold ----------------
+// Mesma agregação (posição × faixa de stack) por trás das duas telas —
+// ver poker_coach/pushfold/analyze.py:leak_categories.
+
+export type DecisionScope = "open_shove" | "facing_shove";
+
+export type LeakCategory = {
+  category_key: string;
+  decision_scope: DecisionScope;
+  position: string;
+  stack_bucket: string;
+  opportunities: number;
+  incorrect: number;
+  error_rate_pct: number | null;
+  ev_lost_total_bb: number;
+  ev_lost_avg_bb: number | null;
+};
+
+export type LeakHand = {
+  site: string;
+  hand_id: string;
+  tournament_id: string;
+  decision_scope: DecisionScope;
+  position: string;
+  effective_bb: number;
+  hero_cards: string;
+  action_taken: string;
+  action_reference: string;
+  ev_lost_bb: number;
+};
+
+export const leaksApi = {
+  categories: (params: { bb_min?: number; bb_max?: number } = {}) =>
+    request<LeakCategory[]>(`/api/pushfold/leaks${qs(params)}`),
+  hands: (params: {
+    decision_scope: DecisionScope;
+    position: string;
+    stack_bucket: string;
+    bb_min?: number;
+    bb_max?: number;
+  }) => request<LeakHand[]>(`/api/pushfold/leaks/hands${qs(params)}`),
+};
+
 // ---------------- Treinador ----------------
 
 export type TrainerSeat = { position: string; is_hero: boolean; stack: number };
@@ -477,6 +520,34 @@ export type SessionRow = {
   with_result: number;
 };
 
+// Evolução de bankroll: BB (sempre disponível) | money/buyins (só
+// torneios com resultado registrado — ver poker_coach/bankroll.py).
+export type BankrollUnit = "bb" | "money" | "buyins";
+export type BankrollPoint = { period: string; value: number; cumulative: number; n: number };
+export type Downswing = {
+  unit: string;
+  value: number;
+  start: string | null;
+  trough: string | null;
+  recovery: string | null;
+} | null;
+export type SessionAverage = {
+  unit: string;
+  avg: number | null;
+  n_sessions: number;
+  n_excluded: number;
+};
+export type NormalizedResult = {
+  basis: string;
+  unit: string;
+  value: number | null;
+  n: number;
+  min_required: number;
+  insufficient: boolean;
+  reason?: string | null;
+};
+export type CurrencyCount = { currency: string; tournaments: number };
+
 export const statsApi = {
   overview: () => request<OverviewStats>("/api/stats/overview"),
   profitByPeriod: (period: "day" | "week" | "month" = "day") =>
@@ -490,6 +561,17 @@ export const statsApi = {
   cashVsTicket: () => request<CashTicketSummary>("/api/stats/cash-vs-ticket"),
   satellites: () => request<SatellitesSummary>("/api/stats/satellites"),
   sessions: () => request<SessionRow[]>("/api/stats/sessions"),
+  currencies: () => request<CurrencyCount[]>("/api/stats/currencies"),
+  bankrollSeries: (params: { unit: BankrollUnit; currency?: string | undefined }) =>
+    request<BankrollPoint[]>(`/api/stats/bankroll-series${qs(params)}`),
+  downswing: (params: { unit: BankrollUnit; currency?: string | undefined }) =>
+    request<Downswing>(`/api/stats/downswing${qs(params)}`),
+  sessionAverage: (params: { unit: BankrollUnit; currency?: string | undefined }) =>
+    request<SessionAverage>(`/api/stats/session-average${qs(params)}`),
+  normalized: (params: {
+    basis: "per_100_tournaments" | "per_1000_hands";
+    unit: BankrollUnit;
+  }) => request<NormalizedResult>(`/api/stats/normalized${qs(params)}`),
 };
 
 // ---------------- Importação ----------------

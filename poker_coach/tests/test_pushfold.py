@@ -138,6 +138,70 @@ def test_same_scenario_and_custom_cards():
     assert ev_32 < 0
 
 
+def test_leak_categories_groups_by_scope_position_bucket():
+    """Duas LeakRow sintéticas no mesmo bucket/posição: uma correta, uma
+    errada — a categoria deve agregar as duas, contar 1 incorreta, e o
+    EV perdido total deve ser só da errada."""
+    rows = [
+        pf.LeakRow(site="s", hand_id="h1", tournament_id="t1", position="BTN",
+                   hero_cards="Ah Kh", effective_bb=8.0, pot_bb=1.5,
+                   hero_decision="push", nash_decision="push",
+                   ev_push_bb=1.2, ev_lost_bb=0.0),
+        pf.LeakRow(site="s", hand_id="h2", tournament_id="t1", position="BTN",
+                   hero_cards="7s 2c", effective_bb=8.5, pot_bb=1.5,
+                   hero_decision="push", nash_decision="fold",
+                   ev_push_bb=-1.0, ev_lost_bb=1.0),
+    ]
+    cats = pf.leak_categories(rows)
+    assert len(cats) == 1
+    c = cats[0]
+    assert c["decision_scope"] == "open_shove"
+    assert c["position"] == "BTN"
+    assert c["stack_bucket"] == "6-10BB"  # bucket [6,11) do LEAK_STACK_BUCKETS
+    assert c["opportunities"] == 2
+    assert c["incorrect"] == 1
+    assert c["ev_lost_total_bb"] == 1.0
+    assert c["error_rate_pct"] == 50.0
+
+
+def test_leak_categories_drops_spots_outside_bucket_range():
+    """Stack fora de todas as faixas (ex.: 30 BB) não vira categoria
+    fantasma — fica de fora, não é forçado num bucket errado."""
+    rows = [
+        pf.LeakRow(site="s", hand_id="h1", tournament_id="t1", position="CO",
+                   hero_cards="Ah Kh", effective_bb=30.0, pot_bb=1.5,
+                   hero_decision="push", nash_decision="push",
+                   ev_push_bb=1.0, ev_lost_bb=0.0),
+    ]
+    assert pf.leak_categories(rows) == []
+
+
+def test_leak_category_hands_drill_down_matches_category():
+    open_rows = [
+        pf.LeakRow(site="s", hand_id="h1", tournament_id="t1", position="BTN",
+                   hero_cards="7s 2c", effective_bb=8.5, pot_bb=1.5,
+                   hero_decision="push", nash_decision="fold",
+                   ev_push_bb=-1.0, ev_lost_bb=1.0),
+    ]
+    facing_rows = [
+        pf.FacingShoveRow(site="s", hand_id="h2", tournament_id="t1", position="SB",
+                           shover_position="BTN", hero_cards="Qc Qd",
+                           effective_bb=9.0, pot_bb=1.5, hero_decision="fold",
+                           nash_decision="call", ev_call_bb=0.8, ev_lost_bb=0.8),
+    ]
+    hands = pf.leak_category_hands(open_rows, facing_rows, "open_shove", "BTN", "6-10BB")
+    assert len(hands) == 1
+    assert hands[0]["hand_id"] == "h1"
+    assert hands[0]["action_taken"] == "Push"
+    assert hands[0]["action_reference"] == "Fold"
+
+    facing_hands = pf.leak_category_hands(open_rows, facing_rows, "facing_shove", "SB", "6-10BB")
+    assert len(facing_hands) == 1
+    assert facing_hands[0]["hand_id"] == "h2"
+    assert facing_hands[0]["action_taken"] == "Fold"
+    assert facing_hands[0]["action_reference"] == "Call"
+
+
 if __name__ == "__main__":
     test_hand_evaluator_category_ordering()
     test_wheel_straight()

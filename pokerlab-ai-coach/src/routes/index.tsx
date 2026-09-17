@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ArrowUpRight, Brain } from "lucide-react";
 import {
   Area,
@@ -17,7 +17,15 @@ import {
 
 import { Money, PageHeader, Panel, StatCard } from "@/components/lab";
 import { Button } from "@/components/ui/button";
-import { statsApi } from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { statsApi, type BankrollUnit } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
@@ -71,9 +79,21 @@ function fmtDateShort(iso: string): string {
   return `${d}/${m}/${(y ?? "").slice(2)}`;
 }
 
+const UNIT_LABEL: Record<BankrollUnit, string> = { bb: "BB", money: "$", buyins: "buy-ins" };
+
+// `signed`: mostra "+" pra valores >=0 (resultado, média — onde o sinal
+// importa). Downswing é sempre uma magnitude de perda (>=0) — mostrar
+// "+50 BB" ali passaria a impressão errada de ganho.
+function fmtByUnit(v: number | null | undefined, unit: BankrollUnit, signed = true): string {
+  if (v == null) return "—";
+  if (unit === "money") return signed ? fmtMoney(v) : `$${Math.abs(v).toFixed(2)}`;
+  const sign = signed && v >= 0 ? "+" : "";
+  const decimals = unit === "buyins" ? 2 : 1;
+  return `${sign}${v.toFixed(decimals)} ${UNIT_LABEL[unit]}`;
+}
+
 function Dashboard() {
   const overviewQ = useQuery({ queryKey: ["stats-overview"], queryFn: statsApi.overview });
-  const netBbByDayQ = useQuery({ queryKey: ["stats-net-bb-day"], queryFn: statsApi.netBbByDay });
   const byBuyinQ = useQuery({ queryKey: ["stats-by-buyin"], queryFn: statsApi.profitByBuyin });
   const byWeekdayQ = useQuery({ queryKey: ["stats-by-weekday"], queryFn: statsApi.netBbByWeekday });
   const byHourQ = useQuery({ queryKey: ["stats-by-hour"], queryFn: statsApi.netBbByHour });
@@ -85,14 +105,47 @@ function Dashboard() {
   const ov = overviewQ.data;
   const roi = ov?.roi ?? null;
 
-  const bbCurve = useMemo(() => {
-    const rows = netBbByDayQ.data ?? [];
-    let acc = 0;
-    return rows.map((r) => {
-      acc += r.net_bb;
-      return { date: r.date, saldo: Math.round(acc * 10) / 10 };
-    });
-  }, [netBbByDayQ.data]);
+  // ── Evolução de bankroll: BB (sempre disponível) | buy-ins | dinheiro
+  // (só torneios com resultado registrado) — ver poker_coach/bankroll.py.
+  const [unit, setUnit] = useState<BankrollUnit>("bb");
+  const [view, setView] = useState<"cumulative" | "period">("cumulative");
+  const [currency, setCurrency] = useState<string | undefined>(undefined);
+
+  const currenciesQ = useQuery({ queryKey: ["stats-currencies"], queryFn: statsApi.currencies });
+  const effectiveCurrency =
+    unit === "money" ? (currency ?? currenciesQ.data?.[0]?.currency) : undefined;
+
+  const bankrollSeriesQ = useQuery({
+    queryKey: ["bankroll-series", unit, effectiveCurrency],
+    queryFn: () => statsApi.bankrollSeries({ unit, currency: effectiveCurrency }),
+  });
+  const downswingQ = useQuery({
+    queryKey: ["bankroll-downswing", unit, effectiveCurrency],
+    queryFn: () => statsApi.downswing({ unit, currency: effectiveCurrency }),
+  });
+  const sessionAvgQ = useQuery({
+    queryKey: ["bankroll-session-avg", unit, effectiveCurrency],
+    queryFn: () => statsApi.sessionAverage({ unit, currency: effectiveCurrency }),
+  });
+  const normTournamentsQ = useQuery({
+    queryKey: ["bankroll-normalized-tournaments", unit],
+    queryFn: () => statsApi.normalized({ basis: "per_100_tournaments", unit }),
+  });
+  const normHandsQ = useQuery({
+    queryKey: ["bankroll-normalized-hands", unit],
+    queryFn: () => statsApi.normalized({ basis: "per_1000_hands", unit }),
+  });
+
+  const bankrollCurve = useMemo(
+    () =>
+      (bankrollSeriesQ.data ?? []).map((r) => ({
+        date: r.period,
+        value: view === "cumulative" ? r.cumulative : r.value,
+      })),
+    [bankrollSeriesQ.data, view],
+  );
+
+  const multipleCurrencies = (currenciesQ.data ?? []).length > 1;
 
   const sessions = sessionsQ.data ?? [];
 
@@ -210,38 +263,177 @@ function Dashboard() {
         <StatCard label="Mãos" value={ov ? ov.hands.toLocaleString("pt-BR") : "—"} tone="neutral" />
       </div>
 
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Maior downswing"
+          value={
+            downswingQ.data
+              ? `${downswingQ.data.value > 0 ? "-" : ""}${fmtByUnit(downswingQ.data.value, unit, false)}`
+              : "—"
+          }
+          tone={downswingQ.data && downswingQ.data.value > 0 ? "loss" : "neutral"}
+          hint={
+            downswingQ.data?.start
+              ? `${fmtDateShort(downswingQ.data.start)} → ${downswingQ.data.trough ? fmtDateShort(downswingQ.data.trough) : "—"}${downswingQ.data.recovery ? ` · recuperado ${fmtDateShort(downswingQ.data.recovery)}` : " · ainda não recuperado"}`
+              : "Sem dado suficiente"
+          }
+        />
+        <StatCard
+          label="Média por sessão"
+          value={sessionAvgQ.data?.avg != null ? fmtByUnit(sessionAvgQ.data.avg, unit) : "—"}
+          tone={
+            sessionAvgQ.data?.avg != null
+              ? sessionAvgQ.data.avg >= 0
+                ? "profit"
+                : "loss"
+              : "neutral"
+          }
+          hint={
+            sessionAvgQ.data
+              ? `${sessionAvgQ.data.n_sessions} sessões${sessionAvgQ.data.n_excluded ? ` · ${sessionAvgQ.data.n_excluded} sem resultado excluídas` : ""}`
+              : "—"
+          }
+        />
+        <StatCard
+          label="Por 100 torneios"
+          value={
+            normTournamentsQ.data && !normTournamentsQ.data.insufficient
+              ? fmtByUnit(normTournamentsQ.data.value, unit)
+              : "—"
+          }
+          tone="neutral"
+          hint={
+            normTournamentsQ.data?.insufficient
+              ? `Dados insuficientes (mín. ${normTournamentsQ.data.min_required}, tem ${normTournamentsQ.data.n})`
+              : "Normalizado"
+          }
+        />
+        <StatCard
+          label="Por 1.000 mãos"
+          value={
+            normHandsQ.data && !normHandsQ.data.insufficient
+              ? fmtByUnit(normHandsQ.data.value, "bb")
+              : "—"
+          }
+          tone="neutral"
+          hint={
+            normHandsQ.data?.reason ??
+            (normHandsQ.data?.insufficient
+              ? `Dados insuficientes (mín. ${normHandsQ.data.min_required}, tem ${normHandsQ.data.n})`
+              : "Normalizado · só em BB")
+          }
+        />
+      </div>
+
       <div className="grid gap-4 xl:grid-cols-3">
         <Panel
-          title="Saldo em BB acumulado"
-          subtitle="Sempre disponível — não depende de resultado registrado"
+          title="Evolução de bankroll"
+          subtitle={
+            unit === "bb"
+              ? "Sempre disponível — não depende de resultado registrado"
+              : "Só torneios com resultado registrado"
+          }
           className="xl:col-span-2"
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              {unit === "money" && multipleCurrencies && effectiveCurrency ? (
+                <Select value={effectiveCurrency} onValueChange={setCurrency}>
+                  <SelectTrigger className="h-7 w-20 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(currenciesQ.data ?? []).map((c) => (
+                      <SelectItem key={c.currency} value={c.currency}>
+                        {c.currency}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <ToggleGroup
+                type="single"
+                size="sm"
+                value={view}
+                onValueChange={(v) => v && setView(v as "cumulative" | "period")}
+              >
+                <ToggleGroupItem value="cumulative" className="h-7 px-2 text-xs">
+                  Acumulado
+                </ToggleGroupItem>
+                <ToggleGroupItem value="period" className="h-7 px-2 text-xs">
+                  Por sessão
+                </ToggleGroupItem>
+              </ToggleGroup>
+              <ToggleGroup
+                type="single"
+                size="sm"
+                value={unit}
+                onValueChange={(v) => v && setUnit(v as BankrollUnit)}
+              >
+                <ToggleGroupItem value="bb" className="h-7 px-2 text-xs">
+                  BB
+                </ToggleGroupItem>
+                <ToggleGroupItem value="buyins" className="h-7 px-2 text-xs">
+                  Buy-ins
+                </ToggleGroupItem>
+                <ToggleGroupItem value="money" className="h-7 px-2 text-xs">
+                  Dinheiro
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          }
         >
           <div className="h-64 px-2 py-4">
-            {bbCurve.length > 0 ? (
+            {bankrollCurve.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={bbCurve}>
-                  <defs>
-                    <linearGradient id="brGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="date" {...axis} tickFormatter={fmtDateShort} minTickGap={30} />
-                  <YAxis {...axis} width={48} />
-                  <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtDateShort} />
-                  <Area
-                    type="monotone"
-                    dataKey="saldo"
-                    stroke="var(--chart-1)"
-                    strokeWidth={2}
-                    fill="url(#brGrad)"
-                  />
-                </AreaChart>
+                {view === "cumulative" ? (
+                  <AreaChart data={bankrollCurve}>
+                    <defs>
+                      <linearGradient id="brGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="date" {...axis} tickFormatter={fmtDateShort} minTickGap={30} />
+                    <YAxis {...axis} width={52} />
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      labelFormatter={fmtDateShort}
+                      formatter={(v: number) => [fmtByUnit(v, unit), "Acumulado"]}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="value"
+                      stroke="var(--chart-1)"
+                      strokeWidth={2}
+                      fill="url(#brGrad)"
+                    />
+                  </AreaChart>
+                ) : (
+                  <BarChart data={bankrollCurve}>
+                    <CartesianGrid stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="date" {...axis} tickFormatter={fmtDateShort} minTickGap={30} />
+                    <YAxis {...axis} width={52} />
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      labelFormatter={fmtDateShort}
+                      formatter={(v: number) => [fmtByUnit(v, unit), "Resultado"]}
+                    />
+                    <Bar dataKey="value" radius={[3, 3, 0, 0]}>
+                      {bankrollCurve.map((r) => (
+                        <Cell key={r.date} fill={r.value >= 0 ? "var(--profit)" : "var(--loss)"} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                )}
               </ResponsiveContainer>
             ) : (
               <div className="grid h-full place-items-center text-sm text-muted-foreground">
-                {netBbByDayQ.isLoading ? "Carregando…" : "Sem mãos com horário ainda."}
+                {bankrollSeriesQ.isLoading
+                  ? "Carregando…"
+                  : unit === "bb"
+                    ? "Sem mãos com horário ainda."
+                    : "Sem torneio com resultado registrado ainda — configure em Torneios."}
               </div>
             )}
           </div>

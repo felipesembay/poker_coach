@@ -17,6 +17,7 @@ import { Route as EstudosRouteImport } from './routes/estudos'
 import { Route as EvolucaoRouteImport } from './routes/evolucao'
 import { Route as FavoritosRouteImport } from './routes/favoritos'
 import { Route as IcmRouteImport } from './routes/icm'
+import { Route as LeaksRouteImport } from './routes/leaks'
 import { Route as MaosRouteImport } from './routes/maos'
 import { Route as PushFoldRouteImport } from './routes/push-fold'
 import { Route as ReplayerRouteImport } from './routes/replayer'
@@ -24,6 +25,7 @@ import { Route as SessoesRouteImport } from './routes/sessoes'
 import { Route as TagsRouteImport } from './routes/tags'
 import { Route as TorneiosRouteImport } from './routes/torneios'
 import { Route as PushFoldIndexRouteImport } from './routes/push-fold.index'
+import { Route as PushFoldHeatmapRouteImport } from './routes/push-fold.heatmap'
 import { Route as PushFoldTreinarRouteImport } from './routes/push-fold.treinar'
 
 const IndexRoute = IndexRouteImport.update({
@@ -66,6 +68,11 @@ const IcmRoute = IcmRouteImport.update({
   path: '/icm',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LeaksRoute = LeaksRouteImport.update({
+  id: '/leaks',
+  path: '/leaks',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MaosRoute = MaosRouteImport.update({
   id: '/maos',
   path: '/maos',
@@ -101,6 +108,11 @@ const PushFoldIndexRoute = PushFoldIndexRouteImport.update({
   path: '/',
   getParentRoute: () => PushFoldRoute,
 } as any)
+const PushFoldHeatmapRoute = PushFoldHeatmapRouteImport.update({
+  id: '/heatmap',
+  path: '/heatmap',
+  getParentRoute: () => PushFoldRoute,
+} as any)
 const PushFoldTreinarRoute = PushFoldTreinarRouteImport.update({
   id: '/treinar',
   path: '/treinar',
@@ -116,12 +128,14 @@ export interface FileRoutesByFullPath {
   '/evolucao': typeof EvolucaoRoute
   '/favoritos': typeof FavoritosRoute
   '/icm': typeof IcmRoute
+  '/leaks': typeof LeaksRoute
   '/maos': typeof MaosRoute
   '/push-fold': typeof PushFoldRouteWithChildren
   '/replayer': typeof ReplayerRoute
   '/sessoes': typeof SessoesRoute
   '/tags': typeof TagsRoute
   '/torneios': typeof TorneiosRoute
+  '/push-fold/heatmap': typeof PushFoldHeatmapRoute
   '/push-fold/treinar': typeof PushFoldTreinarRoute
   '/push-fold/': typeof PushFoldIndexRoute
 }
@@ -134,11 +148,13 @@ export interface FileRoutesByTo {
   '/evolucao': typeof EvolucaoRoute
   '/favoritos': typeof FavoritosRoute
   '/icm': typeof IcmRoute
+  '/leaks': typeof LeaksRoute
   '/maos': typeof MaosRoute
   '/replayer': typeof ReplayerRoute
   '/sessoes': typeof SessoesRoute
   '/tags': typeof TagsRoute
   '/torneios': typeof TorneiosRoute
+  '/push-fold/heatmap': typeof PushFoldHeatmapRoute
   '/push-fold/treinar': typeof PushFoldTreinarRoute
   '/push-fold': typeof PushFoldIndexRoute
 }
@@ -152,12 +168,14 @@ export interface FileRoutesById {
   '/evolucao': typeof EvolucaoRoute
   '/favoritos': typeof FavoritosRoute
   '/icm': typeof IcmRoute
+  '/leaks': typeof LeaksRoute
   '/maos': typeof MaosRoute
   '/push-fold': typeof PushFoldRouteWithChildren
   '/replayer': typeof ReplayerRoute
   '/sessoes': typeof SessoesRoute
   '/tags': typeof TagsRoute
   '/torneios': typeof TorneiosRoute
+  '/push-fold/heatmap': typeof PushFoldHeatmapRoute
   '/push-fold/treinar': typeof PushFoldTreinarRoute
   '/push-fold/': typeof PushFoldIndexRoute
 }
@@ -172,12 +190,14 @@ export interface FileRouteTypes {
     | '/evolucao'
     | '/favoritos'
     | '/icm'
+    | '/leaks'
     | '/maos'
     | '/push-fold'
     | '/replayer'
     | '/sessoes'
     | '/tags'
     | '/torneios'
+    | '/push-fold/heatmap'
     | '/push-fold/treinar'
     | '/push-fold/'
   fileRoutesByTo: FileRoutesByTo
@@ -190,11 +210,13 @@ export interface FileRouteTypes {
     | '/evolucao'
     | '/favoritos'
     | '/icm'
+    | '/leaks'
     | '/maos'
     | '/replayer'
     | '/sessoes'
     | '/tags'
     | '/torneios'
+    | '/push-fold/heatmap'
     | '/push-fold/treinar'
     | '/push-fold'
   id:
@@ -207,12 +229,14 @@ export interface FileRouteTypes {
     | '/evolucao'
     | '/favoritos'
     | '/icm'
+    | '/leaks'
     | '/maos'
     | '/push-fold'
     | '/replayer'
     | '/sessoes'
     | '/tags'
     | '/torneios'
+    | '/push-fold/heatmap'
     | '/push-fold/treinar'
     | '/push-fold/'
   fileRoutesById: FileRoutesById
@@ -226,6 +250,7 @@ export interface RootRouteChildren {
   EvolucaoRoute: typeof EvolucaoRoute
   FavoritosRoute: typeof FavoritosRoute
   IcmRoute: typeof IcmRoute
+  LeaksRoute: typeof LeaksRoute
   MaosRoute: typeof MaosRoute
   PushFoldRoute: typeof PushFoldRouteWithChildren
   ReplayerRoute: typeof ReplayerRoute
@@ -292,6 +317,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IcmRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/leaks': {
+      id: '/leaks'
+      path: '/leaks'
+      fullPath: '/leaks'
+      preLoaderRoute: typeof LeaksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/maos': {
       id: '/maos'
       path: '/maos'
@@ -341,6 +373,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PushFoldIndexRouteImport
       parentRoute: typeof PushFoldRoute
     }
+    '/push-fold/heatmap': {
+      id: '/push-fold/heatmap'
+      path: '/heatmap'
+      fullPath: '/push-fold/heatmap'
+      preLoaderRoute: typeof PushFoldHeatmapRouteImport
+      parentRoute: typeof PushFoldRoute
+    }
     '/push-fold/treinar': {
       id: '/push-fold/treinar'
       path: '/treinar'
@@ -352,11 +391,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface PushFoldRouteChildren {
+  PushFoldHeatmapRoute: typeof PushFoldHeatmapRoute
   PushFoldTreinarRoute: typeof PushFoldTreinarRoute
   PushFoldIndexRoute: typeof PushFoldIndexRoute
 }
 
 const PushFoldRouteChildren: PushFoldRouteChildren = {
+  PushFoldHeatmapRoute: PushFoldHeatmapRoute,
   PushFoldTreinarRoute: PushFoldTreinarRoute,
   PushFoldIndexRoute: PushFoldIndexRoute,
 }
@@ -374,6 +415,7 @@ const rootRouteChildren: RootRouteChildren = {
   EvolucaoRoute: EvolucaoRoute,
   FavoritosRoute: FavoritosRoute,
   IcmRoute: IcmRoute,
+  LeaksRoute: LeaksRoute,
   MaosRoute: MaosRoute,
   PushFoldRoute: PushFoldRouteWithChildren,
   ReplayerRoute: ReplayerRoute,

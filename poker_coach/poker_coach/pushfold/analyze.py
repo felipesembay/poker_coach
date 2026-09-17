@@ -465,6 +465,113 @@ def summarize(rows: list[LeakRow]) -> dict:
     }
 
 
+def analyze_all_facing_shove(conn: sqlite3.Connection, bb_min: float = 5,
+                              bb_max: float = DEFAULT_MAX_BB) -> list[FacingShoveRow]:
+    """Versão em lote de `analyze_facing_shove_hand_row` — sem o batching
+    de 3-queries de `analyze_all` (esse spot é mais raro: exige que ALGUM
+    vilão já tenha dado all-in antes do herói decidir), então N pequeno
+    na prática não pesa fazer 1 SELECT por mão candidata."""
+    candidates = conn.execute(
+        """SELECT site, hand_id FROM hands
+           WHERE hero_position IS NOT NULL AND hero_stack_bb BETWEEN ? AND ?""",
+        (bb_min, bb_max + 5),
+    ).fetchall()
+    out = []
+    for site, hand_id in candidates:
+        r = analyze_facing_shove_hand_row(conn, site, hand_id, max_bb=bb_max)
+        if r is not None:
+            out.append(r)
+    return out
+
+
+# Faixas de stack efetivo para o Leak Finder / heatmap Push/Fold — mesmo
+# espírito de stats.STACK_BUCKETS, mas mais finas na região rasa (é onde
+# a decisão push/fold pesa mais). Ajustável; spots fora dessas faixas
+# (< 3 BB ou > 20 BB) não aparecem nas categorias/heatmap por ora — não
+# é um limite do motor (que cobre até DEFAULT_MAX_BB), só do agrupamento.
+LEAK_STACK_BUCKETS = [(3, 6), (6, 11), (11, 16), (16, 21)]
+
+
+def _bucket_label(effective_bb: float, buckets: list[tuple[float, float]]) -> str | None:
+    for lo, hi in buckets:
+        if lo <= effective_bb < hi:
+            return f"{lo:g}-{hi - 1:g}BB"
+    return None
+
+
+def leak_categories(open_rows: list[LeakRow], facing_rows: list[FacingShoveRow] | None = None,
+                     buckets: list[tuple[float, float]] = LEAK_STACK_BUCKETS) -> list[dict]:
+    """Agrupa dinamicamente por (escopo da decisão, posição, faixa de
+    stack) — não uma lista fixa de categorias. EV perdido só existe
+    porque cada `row` já tem uma referência real (Nash) calculada pelo
+    motor; nenhum valor aqui é heurística sem base. Serve tanto o Leak
+    Finder (ordenado por EV perdido) quanto o heatmap Push/Fold (mesmos
+    dados, pivotados em grid posição×stack no frontend)."""
+    agg: dict[tuple[str, str, str], dict] = {}
+
+    def _add(scope: str, position: str, effective_bb: float, ev_lost: float):
+        b = _bucket_label(effective_bb, buckets)
+        if b is None:
+            return
+        key = (scope, position, b)
+        a = agg.setdefault(key, {"opportunities": 0, "incorrect": 0, "ev_lost_total": 0.0})
+        a["opportunities"] += 1
+        if ev_lost > 0:
+            a["incorrect"] += 1
+        a["ev_lost_total"] += ev_lost
+
+    for r in open_rows:
+        _add("open_shove", r.position, r.effective_bb, r.ev_lost_bb)
+    for r in (facing_rows or []):
+        _add("facing_shove", r.position, r.effective_bb, r.ev_lost_bb)
+
+    out = []
+    for (scope, position, bucket), a in agg.items():
+        n = a["opportunities"]
+        out.append({
+            "category_key": f"{scope}|{position}|{bucket}",
+            "decision_scope": scope, "position": position, "stack_bucket": bucket,
+            "opportunities": n, "incorrect": a["incorrect"],
+            "error_rate_pct": round(a["incorrect"] / n * 100, 1) if n else None,
+            "ev_lost_total_bb": round(a["ev_lost_total"], 1),
+            "ev_lost_avg_bb": round(a["ev_lost_total"] / n, 3) if n else None,
+        })
+    out.sort(key=lambda c: -c["ev_lost_total_bb"])
+    return out
+
+
+def leak_category_hands(open_rows: list[LeakRow], facing_rows: list[FacingShoveRow] | None,
+                         decision_scope: str, position: str, stack_bucket: str,
+                         buckets: list[tuple[float, float]] = LEAK_STACK_BUCKETS) -> list[dict]:
+    """Mãos por trás de uma célula/categoria — drill-down pro Leak Finder
+    e pro heatmap, com o suficiente pra abrir no Replayer."""
+    out = []
+    if decision_scope == "open_shove":
+        for r in open_rows:
+            if r.position == position and _bucket_label(r.effective_bb, buckets) == stack_bucket:
+                out.append({
+                    "site": r.site, "hand_id": r.hand_id, "tournament_id": r.tournament_id,
+                    "decision_scope": "open_shove", "position": r.position,
+                    "effective_bb": r.effective_bb, "hero_cards": r.hero_cards,
+                    "action_taken": "Push" if r.hero_decision == "push" else "Fold",
+                    "action_reference": "Push" if r.nash_decision == "push" else "Fold",
+                    "ev_lost_bb": r.ev_lost_bb,
+                })
+    elif decision_scope == "facing_shove":
+        for r in (facing_rows or []):
+            if r.position == position and _bucket_label(r.effective_bb, buckets) == stack_bucket:
+                out.append({
+                    "site": r.site, "hand_id": r.hand_id, "tournament_id": r.tournament_id,
+                    "decision_scope": "facing_shove", "position": r.position,
+                    "effective_bb": r.effective_bb, "hero_cards": r.hero_cards,
+                    "action_taken": "Call" if r.hero_decision == "call" else "Fold",
+                    "action_reference": "Call" if r.nash_decision == "call" else "Fold",
+                    "ev_lost_bb": r.ev_lost_bb,
+                })
+    out.sort(key=lambda h: -h["ev_lost_bb"])
+    return out
+
+
 def accuracy_by_period(rows: list[LeakRow], period: str = "month") -> list[dict]:
     """Agrupa os spots já analisados por mês/semana/dia (extraído de
     `ts`) e calcula % de decisões corretas — a série real (não sintética)
