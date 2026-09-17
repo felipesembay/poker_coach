@@ -9,7 +9,17 @@ Docs interativas (Swagger, testa direto no navegador): http://localhost:8000/doc
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import favorites, hands, icm, imports, pushfold, replayer, stats, tags
+from .routers import (
+    decision_stats,
+    favorites,
+    hands,
+    icm,
+    imports,
+    pushfold,
+    replayer,
+    stats,
+    tags,
+)
 
 app = FastAPI(
     title="PokerLab API",
@@ -35,6 +45,7 @@ app.include_router(tags.router)
 app.include_router(favorites.router)
 app.include_router(imports.router)
 app.include_router(stats.router)
+app.include_router(decision_stats.router)
 
 
 @app.get("/api/health")

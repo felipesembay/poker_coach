@@ -104,9 +104,15 @@ def analyze_hero_step(
     else:
         facing = "bet"
 
-    prev_pot, prev_stacks, prev_board = rh.state_at(step_index - 1)
+    prev_pot, prev_stacks, _prev_board = rh.state_at(step_index - 1)
     hero_stack = prev_stacks.get(rh.hero)
-    board = prev_board.split() if prev_board else []
+    # Board vem do passo ATUAL, não do anterior: ele é revelado por
+    # inteiro pra rua toda antes de qualquer ação (diferente de
+    # pot/stacks, que só refletem o que já foi apostado). Usar o passo
+    # anterior quebra exatamente na PRIMEIRA ação de cada rua nova (ele
+    # ainda carrega o board da rua ANTERIOR — ex.: primeira ação do flop
+    # herdaria board vazio do fim do preflop).
+    board = step.board_so_far.split() if step.board_so_far else []
     hero_cards = rh.hero_cards.split()
 
     villain_stack = None
@@ -156,3 +162,80 @@ def analyze_hero_step(
         equity_iterations=equity_iterations,
         equity_seed=equity_seed,
     )
+
+
+def build_decision_analysis_record(
+    rh: ReplayHand,
+    step_index: int,
+    analysis: context.DecisionAnalysis,
+    *,
+    actual_result_bb: float | None = None,
+) -> dict:
+    """Monta os campos pra `db.save_decision_analysis(conn, **record)` a
+    partir de uma análise já calculada (`analyze_hero_step`). Não toca no
+    banco — quem chama passa `actual_result_bb` (resultado da mão inteira
+    em BB, vindo de `hands.hero_net_chips`, uma leitura que só o chamador
+    tem o `conn` pra fazer) e faz o `save_decision_analysis` de verdade.
+
+    `actual_result_bb` é o resultado da MÃO INTEIRA, não desta decisão
+    isolada (não existe contrafactual — não sabemos o que teria acontecido
+    se o hero tivesse escolhido outra ação). Isso é uma limitação
+    documentada, não escondida: ver `assumptions` no registro salvo.
+    """
+    step = rh.steps[step_index]
+    bb = rh.bb or None
+    _, prev_stacks, _ = rh.state_at(step_index - 1)
+    hero_stack_chips = prev_stacks.get(rh.hero)
+    ctx = analysis.context
+
+    common = dict(
+        site=rh.site, hand_id=rh.hand_id, step_order=step.order,
+        tournament_id=rh.tournament_id, player=rh.hero, street=step.street,
+        position=rh.positions.get(rh.hero), hero_cards=rh.hero_cards,
+        # Board do passo ATUAL, não do anterior — ver analyze_hero_step.
+        board=step.board_so_far or None, context_type=ctx.context_type,
+        model_type=ctx.recommended_model, actual_action=step.action,
+        actual_result_bb=actual_result_bb,
+    )
+
+    if analysis.nash is not None:
+        n = analysis.nash
+        return {
+            **common,
+            "pot_before_action_bb": n.pot_bb,
+            "bet_faced_bb": None,
+            "call_cost_bb": None,
+            "effective_stack_bb": n.effective_bb,
+            "number_of_opponents": None,
+            "hero_equity": n.equity_vs_call_range,
+            "required_equity": None,
+            "pot_odds_ratio": None,
+            "ev_call_bb": None,
+            "ev_fold_bb": 0.0,
+            "ev_push_bb": n.ev_push_bb,
+            "recommended_action": n.recommendation,
+            "assumptions": ctx.reasoning,
+        }
+
+    c = analysis.contextual
+    assert c is not None  # analyze_hero_step sempre retorna nash XOR contextual
+    by_action = {d.action: d for d in c.decisions}
+    best = c.best()
+    po = c.pot_odds
+    eqr = c.equity
+    return {
+        **common,
+        "pot_before_action_bb": (po.pot_before_bet / bb) if (po and bb) else None,
+        "bet_faced_bb": (po.villain_bet / bb) if (po and bb) else None,
+        "call_cost_bb": (po.hero_call_cost / bb) if (po and bb) else None,
+        "effective_stack_bb": (hero_stack_chips / bb) if (hero_stack_chips is not None and bb) else None,
+        "number_of_opponents": eqr.num_opponents if eqr else None,
+        "hero_equity": eqr.hero_equity if eqr else None,
+        "required_equity": po.required_equity if po else None,
+        "pot_odds_ratio": po.pot_odds_ratio if po else None,
+        "ev_call_bb": (by_action["call"].ev / bb) if (bb and by_action.get("call") and by_action["call"].applicable and by_action["call"].ev is not None) else None,
+        "ev_fold_bb": (by_action["fold"].ev / bb) if (bb and by_action.get("fold") and by_action["fold"].applicable and by_action["fold"].ev is not None) else None,
+        "ev_push_bb": (by_action["push"].ev / bb) if (bb and by_action.get("push") and by_action["push"].applicable and by_action["push"].ev is not None) else None,
+        "recommended_action": best.action if best else None,
+        "assumptions": [*ctx.reasoning, *c.assumptions],
+    }

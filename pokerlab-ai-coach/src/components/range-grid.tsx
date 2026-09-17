@@ -94,7 +94,7 @@ export function RangeGrid({
 
   return (
     <div className="p-3">
-      <p className="mb-2 text-center text-[11px] text-muted-foreground">
+      <p className="mb-2 text-left text-[11px] text-muted-foreground">
         {kind === "call" ? (
           <>
             Range de shove do vilão:{" "}
@@ -109,7 +109,7 @@ export function RangeGrid({
         · {effectiveBb.toFixed(1)} BB efetivos
       </p>
       <div
-        className="mx-auto inline-grid overflow-hidden rounded-md border border-border"
+        className="inline-grid overflow-hidden rounded-md border border-border"
         style={{ gridTemplateColumns: `repeat(13, ${cellPx}px)` }}
       >
         {Array.from({ length: 13 }).flatMap((_, row) =>
@@ -139,7 +139,7 @@ export function RangeGrid({
         )}
       </div>
       {heroClass && (
-        <p className="mt-2 text-center text-[11px] text-muted-foreground">
+        <p className="mt-2 text-left text-[11px] text-muted-foreground">
           Sua mão: <strong className="text-primary">{heroClass}</strong> (destacada acima)
         </p>
       )}

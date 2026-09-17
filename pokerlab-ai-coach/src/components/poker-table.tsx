@@ -31,6 +31,7 @@ export function PokerTable({
   seats,
   board = [],
   pot,
+  potOddsRatio,
   cardSize = "lg",
   seatCardSize = "sm",
   bb,
@@ -38,6 +39,10 @@ export function PokerTable({
   seats: TableSeat[];
   board?: string[];
   pot?: number;
+  /** Pot odds da decisão do Hero nesse ponto (ex. "2.3:1"), quando ele
+   * está enfrentando uma aposta — vem do Decision Analysis (Etapa 6/7).
+   * Ausente em passos que não são decisão do Hero ou sem aposta pra pagar. */
+  potOddsRatio?: string | null | undefined;
   cardSize?: "sm" | "md" | "lg" | "xl" | "2xl";
   seatCardSize?: "sm" | "md" | "lg" | "xl" | "2xl";
   /** Tamanho do big blind (chips) — quando informado, o stack de cada
@@ -70,9 +75,14 @@ export function PokerTable({
         {pot != null && (
           <>
             <p className="num mt-3 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              Pot
+              Pot{potOddsRatio ? " / Pot Odds" : ""}
             </p>
-            <p className="num text-lg font-bold">{pot.toLocaleString("pt-BR")}</p>
+            <p className="num text-lg font-bold">
+              {pot.toLocaleString("pt-BR")}
+              {potOddsRatio && (
+                <span className="text-muted-foreground"> / {potOddsRatio}</span>
+              )}
+            </p>
           </>
         )}
       </div>

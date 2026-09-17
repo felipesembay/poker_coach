@@ -570,6 +570,7 @@ function Replayer() {
   });
 
   const ia = hand.painel_ia;
+  const showHeatmap = ia.effective_bb != null && ia.pot_bb != null;
 
   const streetLabels: Record<string, string> = {
     preflop: "Preflop",
@@ -704,6 +705,7 @@ function Replayer() {
                 seats={tableSeats}
                 board={boardCards}
                 pot={pot}
+                potOddsRatio={decisionQ.data?.contextual?.pot_odds?.pot_odds_ratio}
                 cardSize="xl"
                 seatCardSize="lg"
                 bb={hand.bb}
@@ -793,20 +795,177 @@ function Replayer() {
               </div>
             </Panel>
 
-            {/* Heatmap: aparece sempre que der pra calcular efetivo/pot no
-                preflop, mesmo quando o motor não julga a decisão real
-                (spot_kind="reference" — ver preflop_reference_spot no
-                backend). Só falta quando não há herói/oponente ativo
-                identificável (ex. hero sentou fora, mão sem preflop). */}
-            {ia.effective_bb != null && ia.pot_bb != null && (
-              <div className="min-w-0 flex-1">
-                <RangeGridPanel
-                  effectiveBb={ia.effective_bb}
-                  potBb={ia.pot_bb}
-                  heroCards={heroCards}
-                  kind={gridKind}
-                  cellPx={28}
-                />
+            {/* Coluna lateral: heatmap (quando dá pra calcular efetivo/pot
+                no preflop — spot_kind="reference" inclusive, ver
+                preflop_reference_spot no backend) + Decision Analysis
+                (quando o passo atual é uma decisão real do Hero) —
+                lado a lado, cada um em sua própria caixa: o heatmap do
+                tamanho do conteúdo (não estica), o Decision Analysis
+                ocupando o espaço que sobrar. */}
+            {(showHeatmap || isHeroDecisionStep) && (
+              <div className="flex min-w-0 flex-1 flex-wrap items-start gap-4">
+                {showHeatmap && (
+                  <RangeGridPanel
+                    className="shrink-0"
+                    effectiveBb={ia.effective_bb!}
+                    potBb={ia.pot_bb!}
+                    heroCards={heroCards}
+                    kind={gridKind}
+                    cellPx={28}
+                  />
+                )}
+
+                {isHeroDecisionStep && (
+                  <Panel
+                    className="min-w-[280px] flex-1"
+                    title="Decision Analysis"
+                    subtitle={
+                      decisionQ.data?.context.reasoning[0] ??
+                      "Equity, pot odds e EV contextual da decisão do Hero"
+                    }
+                  >
+                    {decisionQ.isLoading ? (
+                      <p className="p-4 text-sm text-muted-foreground">Calculando…</p>
+                    ) : decisionQ.isError ? (
+                      <p className="p-4 text-sm text-muted-foreground">
+                        {decisionQ.error instanceof Error
+                          ? decisionQ.error.message.replace(/^\d+\s+\S+:\s*/, "")
+                          : "Não foi possível calcular essa decisão."}
+                      </p>
+                    ) : decisionQ.data ? (
+                      <div className="space-y-3 p-4">
+                        <Badge variant="outline" className="text-primary">
+                          {decisionQ.data.context.context_type}
+                        </Badge>
+                        <p className="text-xs text-muted-foreground">
+                          Modelo: {decisionQ.data.context.recommended_model}
+                        </p>
+
+                        {decisionQ.data.nash && (
+                          <div className="rounded-md border border-border bg-elevated/50 p-3 text-sm">
+                            <p className="text-xs uppercase tracking-[0.1em] text-muted-foreground">
+                              Nash Push/Fold isolado
+                            </p>
+                            <p className="mt-1">
+                              Recomendação:{" "}
+                              <strong
+                                className={
+                                  decisionQ.data.nash.recommendation === "push"
+                                    ? "text-profit"
+                                    : "text-loss"
+                                }
+                              >
+                                {decisionQ.data.nash.recommendation}
+                              </strong>
+                            </p>
+                            <p className="text-muted-foreground">
+                              EV: <strong>{decisionQ.data.nash.ev_push_bb.toFixed(2)} BB</strong>
+                            </p>
+                            <p className="text-muted-foreground">
+                              Equity vs range de call:{" "}
+                              <strong>
+                                {(decisionQ.data.nash.equity_vs_call_range * 100).toFixed(1)}%
+                              </strong>
+                            </p>
+                            <p className="text-muted-foreground">
+                              {decisionQ.data.nash.effective_bb.toFixed(1)} BB efetivo ·{" "}
+                              {decisionQ.data.nash.pot_bb.toFixed(2)} BB de pote morto
+                            </p>
+                          </div>
+                        )}
+
+                        {decisionQ.data.contextual && (
+                          <>
+                            <div className="space-y-2 rounded-md border border-border bg-elevated/50 p-3 text-sm">
+                              <p className="text-xs uppercase tracking-[0.1em] text-muted-foreground">
+                                EV por ação
+                              </p>
+                              {decisionQ.data.contextual.decisions.map((d) => (
+                                <div
+                                  key={d.action}
+                                  className="flex items-center justify-between gap-2"
+                                >
+                                  <span
+                                    className={cn(
+                                      "capitalize",
+                                      !d.applicable && "text-muted-foreground line-through",
+                                    )}
+                                  >
+                                    {d.action}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "font-mono text-xs",
+                                      d.ev == null
+                                        ? "text-muted-foreground"
+                                        : d.ev >= 0
+                                          ? "text-profit"
+                                          : "text-loss",
+                                    )}
+                                  >
+                                    {d.ev != null ? `${d.ev >= 0 ? "+" : ""}${d.ev.toFixed(2)}` : "—"}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {decisionQ.data.contextual.equity && (
+                              <div className="space-y-1 rounded-md border border-border bg-elevated/50 p-3 text-sm">
+                                <p className="text-xs uppercase tracking-[0.1em] text-muted-foreground">
+                                  Equity
+                                </p>
+                                <p>
+                                  Hero:{" "}
+                                  <strong>
+                                    {(decisionQ.data.contextual.equity.hero_equity * 100).toFixed(1)}%
+                                  </strong>
+                                </p>
+                                <p className="text-muted-foreground">
+                                  W {(decisionQ.data.contextual.equity.win_probability * 100).toFixed(0)}%
+                                  · T {(decisionQ.data.contextual.equity.tie_probability * 100).toFixed(0)}%
+                                  · L {(decisionQ.data.contextual.equity.loss_probability * 100).toFixed(0)}%
+                                </p>
+                                {decisionQ.data.contextual.pot_odds && (
+                                  <p className="text-muted-foreground">
+                                    Required equity:{" "}
+                                    <strong>
+                                      {(decisionQ.data.contextual.pot_odds.required_equity * 100).toFixed(1)}%
+                                    </strong>{" "}
+                                    · Pot odds:{" "}
+                                    <strong>{decisionQ.data.contextual.pot_odds.pot_odds_ratio}</strong>
+                                  </p>
+                                )}
+                                {decisionQ.data.contextual.equity.outs.length > 0 && (
+                                  <p className="text-muted-foreground">
+                                    Outs ({decisionQ.data.contextual.equity.outs.length}):{" "}
+                                    {decisionQ.data.contextual.equity.outs.join(" ")}
+                                  </p>
+                                )}
+                                <p className="text-muted-foreground">
+                                  {decisionQ.data.contextual.equity.simulation_method === "exact"
+                                    ? "Cálculo exato"
+                                    : `Monte Carlo · ${decisionQ.data.contextual.equity.iterations} iterações`}
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer select-none">Premissas</summary>
+                          <ul className="mt-1 list-inside list-disc space-y-0.5">
+                            {[
+                              ...decisionQ.data.context.reasoning,
+                              ...(decisionQ.data.contextual?.assumptions ?? []),
+                            ].map((a, i) => (
+                              <li key={i}>{a}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      </div>
+                    ) : null}
+                  </Panel>
+                )}
               </div>
             )}
           </div>
@@ -976,155 +1135,6 @@ function Replayer() {
               </div>
             )}
           </Panel>
-
-          {/* Decision Analysis (Etapa 6) — equity/pot odds/EV contextual pro
-              passo do hero atual, quando aplicável. Complementa o painel_ia
-              acima (que só cobre abertura/facing-shove preflop): esse aqui
-              cobre qualquer street/qualquer ação anterior. */}
-          {isHeroDecisionStep && (
-            <Panel
-              title="Decision Analysis"
-              subtitle={
-                decisionQ.data?.context.reasoning[0] ??
-                "Equity, pot odds e EV contextual da decisão do Hero"
-              }
-            >
-              {decisionQ.isLoading ? (
-                <p className="p-4 text-sm text-muted-foreground">Calculando…</p>
-              ) : decisionQ.isError ? (
-                <p className="p-4 text-sm text-muted-foreground">
-                  {decisionQ.error instanceof Error
-                    ? decisionQ.error.message.replace(/^\d+\s+\S+:\s*/, "")
-                    : "Não foi possível calcular essa decisão."}
-                </p>
-              ) : decisionQ.data ? (
-                <div className="space-y-4 p-4">
-                  <Badge variant="outline" className="text-primary">
-                    {decisionQ.data.context.context_type} · modelo:{" "}
-                    {decisionQ.data.context.recommended_model}
-                  </Badge>
-
-                  {decisionQ.data.nash && (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-md border border-border bg-elevated/50 p-3 text-sm">
-                        <p className="text-xs uppercase tracking-[0.1em] text-muted-foreground">
-                          Nash Push/Fold isolado
-                        </p>
-                        <p className="mt-1">
-                          Recomendação:{" "}
-                          <strong
-                            className={
-                              decisionQ.data.nash.recommendation === "push"
-                                ? "text-profit"
-                                : "text-loss"
-                            }
-                          >
-                            {decisionQ.data.nash.recommendation}
-                          </strong>
-                        </p>
-                        <p className="text-muted-foreground">
-                          EV: <strong>{decisionQ.data.nash.ev_push_bb.toFixed(2)} BB</strong> ·
-                          Equity vs range de call:{" "}
-                          <strong>
-                            {(decisionQ.data.nash.equity_vs_call_range * 100).toFixed(1)}%
-                          </strong>
-                        </p>
-                        <p className="text-muted-foreground">
-                          {decisionQ.data.nash.effective_bb.toFixed(1)} BB efetivo ·{" "}
-                          {decisionQ.data.nash.pot_bb.toFixed(2)} BB de pote morto
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {decisionQ.data.contextual && (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="space-y-2 rounded-md border border-border bg-elevated/50 p-3 text-sm">
-                        <p className="text-xs uppercase tracking-[0.1em] text-muted-foreground">
-                          EV por ação
-                        </p>
-                        {decisionQ.data.contextual.decisions.map((d) => (
-                          <div key={d.action} className="flex items-center justify-between gap-2">
-                            <span
-                              className={cn(
-                                "capitalize",
-                                !d.applicable && "text-muted-foreground line-through",
-                              )}
-                            >
-                              {d.action}
-                            </span>
-                            <span
-                              className={cn(
-                                "font-mono text-xs",
-                                d.ev == null
-                                  ? "text-muted-foreground"
-                                  : d.ev >= 0
-                                    ? "text-profit"
-                                    : "text-loss",
-                              )}
-                            >
-                              {d.ev != null ? `${d.ev >= 0 ? "+" : ""}${d.ev.toFixed(2)}` : "—"}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {decisionQ.data.contextual.equity && (
-                        <div className="space-y-1 rounded-md border border-border bg-elevated/50 p-3 text-sm">
-                          <p className="text-xs uppercase tracking-[0.1em] text-muted-foreground">
-                            Equity
-                          </p>
-                          <p>
-                            Hero:{" "}
-                            <strong>
-                              {(decisionQ.data.contextual.equity.hero_equity * 100).toFixed(1)}%
-                            </strong>{" "}
-                            <span className="text-muted-foreground">
-                              (W {(decisionQ.data.contextual.equity.win_probability * 100).toFixed(0)}%
-                              · T {(decisionQ.data.contextual.equity.tie_probability * 100).toFixed(0)}%
-                              · L {(decisionQ.data.contextual.equity.loss_probability * 100).toFixed(0)}%)
-                            </span>
-                          </p>
-                          {decisionQ.data.contextual.pot_odds && (
-                            <p className="text-muted-foreground">
-                              Required equity:{" "}
-                              <strong>
-                                {(decisionQ.data.contextual.pot_odds.required_equity * 100).toFixed(1)}%
-                              </strong>{" "}
-                              · Pot odds: <strong>{decisionQ.data.contextual.pot_odds.pot_odds_ratio}</strong>
-                            </p>
-                          )}
-                          {decisionQ.data.contextual.equity.outs.length > 0 && (
-                            <p className="text-muted-foreground">
-                              Outs ({decisionQ.data.contextual.equity.outs.length}):{" "}
-                              {decisionQ.data.contextual.equity.outs.join(" ")}
-                            </p>
-                          )}
-                          <p className="text-muted-foreground">
-                            {decisionQ.data.contextual.equity.simulation_method === "exact"
-                              ? "Cálculo exato"
-                              : `Monte Carlo · ${decisionQ.data.contextual.equity.iterations} iterações`}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <details className="text-xs text-muted-foreground">
-                    <summary className="cursor-pointer select-none">Premissas</summary>
-                    <ul className="mt-1 list-inside list-disc space-y-0.5">
-                      {[
-                        ...decisionQ.data.context.reasoning,
-                        ...(decisionQ.data.contextual?.assumptions ?? []),
-                      ].map((a, i) => (
-                        <li key={i}>{a}</li>
-                      ))}
-                    </ul>
-                  </details>
-                </div>
-              ) : null}
-            </Panel>
-          )}
 
           {/* Timeline */}
           <Panel title="Timeline" subtitle="Sequência completa da mão">

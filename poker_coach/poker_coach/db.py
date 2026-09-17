@@ -17,6 +17,7 @@ NOTHING` + checar `cursor.rowcount` — nunca levanta exceção pro caso
 esperado de "mão já importada", então nunca aborta a transação do
 import incremental.
 """
+import json
 import re
 
 import psycopg2
@@ -190,8 +191,41 @@ CREATE TABLE IF NOT EXISTS quiz_log (
     ev_lost_bb REAL
 );
 
+CREATE TABLE IF NOT EXISTS decision_analysis (
+    site TEXT NOT NULL,
+    hand_id TEXT NOT NULL,
+    step_order INTEGER NOT NULL,
+    tournament_id TEXT,
+    player TEXT NOT NULL,
+    street TEXT NOT NULL,
+    position TEXT,
+    hero_cards TEXT,
+    board TEXT,
+    pot_before_action_bb REAL,
+    bet_faced_bb REAL,
+    call_cost_bb REAL,
+    effective_stack_bb REAL,
+    number_of_opponents INTEGER,
+    context_type TEXT NOT NULL,
+    model_type TEXT NOT NULL,
+    hero_equity REAL,
+    required_equity REAL,
+    pot_odds_ratio TEXT,
+    ev_call_bb REAL,
+    ev_fold_bb REAL,
+    ev_push_bb REAL,
+    recommended_action TEXT,
+    actual_action TEXT,
+    actual_result_bb REAL,
+    assumptions TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (site, hand_id, step_order)
+);
+
 CREATE INDEX IF NOT EXISTS idx_hands_trny ON hands(site, tournament_id);
 CREATE INDEX IF NOT EXISTS idx_hands_stackbb ON hands(hero_stack_bb);
+CREATE INDEX IF NOT EXISTS idx_decision_analysis_hand ON decision_analysis(site, hand_id);
+CREATE INDEX IF NOT EXISTS idx_decision_analysis_model ON decision_analysis(model_type, context_type);
 """
 
 
@@ -435,3 +469,62 @@ def tournaments_with_payouts(conn: PGConnection) -> list[tuple]:
              ON p.site = t.site AND p.tournament_id = t.tournament_id
            ORDER BY t.first_seen DESC"""
     ).fetchall()
+
+
+# ---------------- Decision Analysis (Etapa 7 — Poker Decision Engine) ----------------
+#
+# Persistência opcional de uma análise já calculada (equity_engine +
+# pot_odds + ev_engine + context, via replay_decision.py) — nunca
+# recalcula nada aqui, só guarda o que já foi produzido. Sem `session_id`:
+# não existe tabela de sessões no schema (sessões são calculadas
+# dinamicamente por stats.py/bankroll.py) — inventar um id aqui seria
+# persistir um dado que não existe de verdade. Tudo em BB (não em chips)
+# pra ser comparável entre mãos com blind levels diferentes.
+
+def save_decision_analysis(
+    conn: PGConnection, *, site: str, hand_id: str, step_order: int,
+    tournament_id: str | None, player: str, street: str, position: str | None,
+    hero_cards: str | None, board: str | None,
+    pot_before_action_bb: float | None, bet_faced_bb: float | None,
+    call_cost_bb: float | None, effective_stack_bb: float | None,
+    number_of_opponents: int | None, context_type: str, model_type: str,
+    hero_equity: float | None, required_equity: float | None, pot_odds_ratio: str | None,
+    ev_call_bb: float | None, ev_fold_bb: float | None, ev_push_bb: float | None,
+    recommended_action: str | None, actual_action: str | None, actual_result_bb: float | None,
+    assumptions: list[str],
+) -> None:
+    """Upsert de uma linha de decision_analysis (chave: site+hand_id+step_order
+    — reanalisar o mesmo passo só atualiza a linha, não duplica)."""
+    import datetime as _dt
+    conn.execute(
+        """INSERT INTO decision_analysis (
+               site, hand_id, step_order, tournament_id, player, street, position,
+               hero_cards, board, pot_before_action_bb, bet_faced_bb, call_cost_bb,
+               effective_stack_bb, number_of_opponents, context_type, model_type,
+               hero_equity, required_equity, pot_odds_ratio, ev_call_bb, ev_fold_bb,
+               ev_push_bb, recommended_action, actual_action, actual_result_bb,
+               assumptions, created_at
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT (site, hand_id, step_order) DO UPDATE SET
+             tournament_id=excluded.tournament_id, player=excluded.player,
+             street=excluded.street, position=excluded.position,
+             hero_cards=excluded.hero_cards, board=excluded.board,
+             pot_before_action_bb=excluded.pot_before_action_bb,
+             bet_faced_bb=excluded.bet_faced_bb, call_cost_bb=excluded.call_cost_bb,
+             effective_stack_bb=excluded.effective_stack_bb,
+             number_of_opponents=excluded.number_of_opponents,
+             context_type=excluded.context_type, model_type=excluded.model_type,
+             hero_equity=excluded.hero_equity, required_equity=excluded.required_equity,
+             pot_odds_ratio=excluded.pot_odds_ratio, ev_call_bb=excluded.ev_call_bb,
+             ev_fold_bb=excluded.ev_fold_bb, ev_push_bb=excluded.ev_push_bb,
+             recommended_action=excluded.recommended_action,
+             actual_action=excluded.actual_action, actual_result_bb=excluded.actual_result_bb,
+             assumptions=excluded.assumptions, created_at=excluded.created_at""",
+        (site, hand_id, step_order, tournament_id, player, street, position,
+         hero_cards, board, pot_before_action_bb, bet_faced_bb, call_cost_bb,
+         effective_stack_bb, number_of_opponents, context_type, model_type,
+         hero_equity, required_equity, pot_odds_ratio, ev_call_bb, ev_fold_bb,
+         ev_push_bb, recommended_action, actual_action, actual_result_bb,
+         json.dumps(assumptions),
+         _dt.datetime.now().isoformat(timespec="seconds")),
+    )

@@ -327,7 +327,11 @@ def _decision_analysis_out(analysis) -> DecisionAnalysisOut:
 @router.get("/{site}/{hand_id}/decision/{step}", response_model=DecisionAnalysisOut)
 def get_decision(site: str, hand_id: str, step: int,
                   equity_iterations: int | None = Query(None),
-                  equity_seed: int | None = Query(None)):
+                  equity_seed: int | None = Query(None),
+                  persist: bool = Query(False, description=(
+                      "Salva essa análise em decision_analysis (Etapa 7) pras estatísticas "
+                      "de Preflop Model / Contextual Decision / Postflop Performance."
+                  ))):
     conn = _conn()
     try:
         rh = replay.load(conn, site, hand_id)
@@ -339,6 +343,20 @@ def get_decision(site: str, hand_id: str, step: int,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+        if persist:
+            row = conn.execute(
+                "SELECT hero_net_chips FROM hands WHERE site=? AND hand_id=?", (site, hand_id)
+            ).fetchone()
+            actual_result_bb = (
+                row[0] / rh.bb if row and row[0] is not None and rh.bb else None
+            )
+            record = replay_decision.build_decision_analysis_record(
+                rh, step, analysis, actual_result_bb=actual_result_bb,
+            )
+            dbm.save_decision_analysis(conn, **record)
+            conn.commit()
+
         return _decision_analysis_out(analysis)
     finally:
         conn.close()

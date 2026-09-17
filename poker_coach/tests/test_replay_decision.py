@@ -7,7 +7,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from poker_coach.equity_engine import EquityOpponent
 from poker_coach.models import Seat
 from poker_coach.replay import ReplayHand, ReplayStep
-from poker_coach.replay_decision import ReplayDecisionError, analyze_hero_step
+from poker_coach.replay_decision import (
+    ReplayDecisionError,
+    analyze_hero_step,
+    build_decision_analysis_record,
+)
 
 WIN_BOARD = "2c 7d Jh 4s 6c"
 
@@ -45,6 +49,21 @@ def test_preflop_open_routes_to_pushfold_nash():
     assert result.nash.effective_bb == pytest.approx(99 / 2)  # stack do hero antes da ação / bb
     assert result.nash.pot_bb == pytest.approx(3 / 2)  # sb+bb / bb = dinheiro morto
 
+    record = build_decision_analysis_record(rh, 2, result, actual_result_bb=4.5)
+    assert record["model_type"] == "pushfold_nash"
+    assert record["context_type"] == "preflop_open"
+    assert record["effective_stack_bb"] == pytest.approx(99 / 2)
+    assert record["pot_before_action_bb"] == pytest.approx(3 / 2)
+    assert record["hero_equity"] == result.nash.equity_vs_call_range
+    assert record["ev_push_bb"] == result.nash.ev_push_bb
+    assert record["ev_fold_bb"] == 0.0
+    assert record["ev_call_bb"] is None
+    assert record["recommended_action"] == result.nash.recommendation
+    assert record["actual_action"] == "raise"
+    assert record["actual_result_bb"] == 4.5
+    assert record["player"] == "hero"
+    assert record["street"] == "preflop"
+
 
 def test_postflop_facing_bet_matches_pot_odds_spec_example():
     rh = _base_hand()
@@ -71,6 +90,22 @@ def test_postflop_facing_bet_matches_pot_odds_spec_example():
     assert result.contextual.equity.hero_equity == 1.0
     by_action = {d.action: d for d in result.contextual.decisions}
     assert by_action["call"].ev == pytest.approx(15.0)  # 1.0*20 - 5
+
+    record = build_decision_analysis_record(rh, 1, result, actual_result_bb=-2.0)
+    assert record["model_type"] == "contextual_ev"
+    assert record["pot_before_action_bb"] == pytest.approx(5.0)  # 10 chips / bb=2
+    assert record["bet_faced_bb"] == pytest.approx(2.5)  # 5 / 2
+    assert record["call_cost_bb"] == pytest.approx(2.5)
+    assert record["hero_equity"] == 1.0
+    assert record["required_equity"] == pytest.approx(0.25)
+    assert record["ev_call_bb"] == pytest.approx(7.5)  # 15 chips / bb=2
+    # Hero sempre vence (equity=1.0) e ainda tem fichas sobrando pra
+    # empurrar mais que o call (hero_stack=80 > call_cost=5, villão=75) —
+    # push maximiza o que entra no pote, então bate o call em EV.
+    assert record["recommended_action"] == "push"
+    assert record["actual_action"] == "call"
+    assert record["actual_result_bb"] == -2.0
+    assert record["number_of_opponents"] == 1
 
 
 def test_facing_raise_does_not_double_count_heros_own_prior_bet():
@@ -120,6 +155,27 @@ def test_rejects_non_decision_action():
     rh.street_first_index = {"preflop": 0}
     with pytest.raises(ReplayDecisionError, match="não é uma decisão"):
         analyze_hero_step(rh, 0)
+
+
+def test_board_uses_current_step_not_previous_street_on_first_action_of_new_street():
+    # Regressão: a última ação do preflop tem board_so_far="" (rua
+    # antiga); a primeira ação do flop já vem com o board novo em
+    # `replay.py` (revelado por inteiro antes de qualquer ação). Usar
+    # state_at(step_index - 1) pro board pegava a rua ERRADA bem nesse
+    # caso — sempre que o hero é o primeiro a agir numa rua nova.
+    rh = _base_hand()
+    rh.steps = [
+        ReplayStep(7, "preflop", "villain", "BB", "check", 0, False, 6,
+                   {"hero": 94, "villain": 94}, ""),
+        ReplayStep(8, "flop", "hero", "SB", "check", 0, False, 6,
+                   {"hero": 94, "villain": 94}, "2c 7d 9h"),
+    ]
+    rh.street_first_index = {"preflop": 0, "flop": 1}
+
+    result = analyze_hero_step(rh, 1)
+    assert result.context.context_type == "postflop_first_to_act"
+    record = build_decision_analysis_record(rh, 1, result, actual_result_bb=0.0)
+    assert record["board"] == "2c 7d 9h"
 
 
 def test_rejects_hand_without_hero_cards():
