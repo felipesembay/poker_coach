@@ -62,6 +62,8 @@ const tooltipStyle = {
   fontFamily: "var(--font-mono)",
 };
 
+const tooltipItemStyle = { color: "var(--popover-foreground)" };
+
 function fmtMoney(v: number | null | undefined): string {
   if (v == null) return "—";
   return `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(2)}`;
@@ -144,6 +146,16 @@ function Dashboard() {
       })),
     [bankrollSeriesQ.data, view],
   );
+
+  const bankrollZeroOffset = useMemo(() => {
+    if (bankrollCurve.length === 0) return 1;
+    const values = bankrollCurve.map((r) => r.value);
+    const max = Math.max(0, ...values);
+    const min = Math.min(0, ...values);
+    if (max <= 0) return 0;
+    if (min >= 0) return 1;
+    return max / (max - min);
+  }, [bankrollCurve]);
 
   const multipleCurrencies = (currenciesQ.data ?? []).length > 1;
 
@@ -388,9 +400,23 @@ function Dashboard() {
                 {view === "cumulative" ? (
                   <AreaChart data={bankrollCurve}>
                     <defs>
+                      <linearGradient id="brStroke" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset={bankrollZeroOffset} stopColor="var(--profit)" />
+                        <stop offset={bankrollZeroOffset} stopColor="var(--loss)" />
+                      </linearGradient>
                       <linearGradient id="brGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+                        <stop offset={0} stopColor="var(--profit)" stopOpacity={0.35} />
+                        <stop
+                          offset={bankrollZeroOffset}
+                          stopColor="var(--profit)"
+                          stopOpacity={0.35}
+                        />
+                        <stop
+                          offset={bankrollZeroOffset}
+                          stopColor="var(--loss)"
+                          stopOpacity={0.35}
+                        />
+                        <stop offset={1} stopColor="var(--loss)" stopOpacity={0.35} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid stroke="var(--border)" vertical={false} />
@@ -398,13 +424,19 @@ function Dashboard() {
                     <YAxis {...axis} width={52} />
                     <Tooltip
                       contentStyle={tooltipStyle}
+                      itemStyle={tooltipItemStyle}
                       labelFormatter={fmtDateShort}
-                      formatter={(v: number) => [fmtByUnit(v, unit), "Acumulado"]}
+                      formatter={(v: number) => [
+                        <span style={{ color: v >= 0 ? "var(--profit)" : "var(--loss)" }}>
+                          {fmtByUnit(v, unit)}
+                        </span>,
+                        "Acumulado",
+                      ]}
                     />
                     <Area
                       type="monotone"
                       dataKey="value"
-                      stroke="var(--chart-1)"
+                      stroke="url(#brStroke)"
                       strokeWidth={2}
                       fill="url(#brGrad)"
                     />
@@ -416,8 +448,15 @@ function Dashboard() {
                     <YAxis {...axis} width={52} />
                     <Tooltip
                       contentStyle={tooltipStyle}
+                      itemStyle={tooltipItemStyle}
+                      cursor={{ fill: "var(--accent)" }}
                       labelFormatter={fmtDateShort}
-                      formatter={(v: number) => [fmtByUnit(v, unit), "Resultado"]}
+                      formatter={(v: number) => [
+                        <span style={{ color: v >= 0 ? "var(--profit)" : "var(--loss)" }}>
+                          {fmtByUnit(v, unit)}
+                        </span>,
+                        "Resultado",
+                      ]}
                     />
                     <Bar dataKey="value" radius={[3, 3, 0, 0]}>
                       {bankrollCurve.map((r) => (
@@ -449,7 +488,12 @@ function Dashboard() {
                   <YAxis {...axis} width={40} tickFormatter={(v) => `${v}%`} />
                   <Tooltip
                     contentStyle={tooltipStyle}
-                    formatter={(v: number) => [`${v}%`, "ROI"]}
+                    itemStyle={tooltipItemStyle}
+                    cursor={{ fill: "var(--accent)" }}
+                    formatter={(v: number) => [
+                      <span style={{ color: v >= 0 ? "var(--profit)" : "var(--loss)" }}>{v}%</span>,
+                      "ROI",
+                    ]}
                     labelFormatter={(v) => `Buy-in $${v}`}
                   />
                   <Bar dataKey="roi_pct" radius={[3, 3, 0, 0]}>
@@ -482,7 +526,15 @@ function Dashboard() {
                   <CartesianGrid stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="weekday" {...axis} />
                   <YAxis {...axis} width={44} />
-                  <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "var(--accent)" }} />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    itemStyle={tooltipItemStyle}
+                    cursor={{ fill: "var(--accent)" }}
+                    formatter={(v: number) => [
+                      <span style={{ color: v >= 0 ? "var(--profit)" : "var(--loss)" }}>{v}</span>,
+                      "Saldo",
+                    ]}
+                  />
                   <Bar dataKey="net_bb" radius={[3, 3, 0, 0]}>
                     {(byWeekdayQ.data ?? []).map((w) => (
                       <Cell
@@ -511,8 +563,13 @@ function Dashboard() {
                   <YAxis {...axis} width={44} />
                   <Tooltip
                     contentStyle={tooltipStyle}
+                    itemStyle={tooltipItemStyle}
                     cursor={{ fill: "var(--accent)" }}
                     labelFormatter={(v) => `${v}h`}
+                    formatter={(v: number) => [
+                      <span style={{ color: v >= 0 ? "var(--profit)" : "var(--loss)" }}>{v}</span>,
+                      "Saldo",
+                    ]}
                   />
                   <Bar dataKey="net_bb" radius={[3, 3, 0, 0]}>
                     {(byHourQ.data ?? []).map((h) => (
