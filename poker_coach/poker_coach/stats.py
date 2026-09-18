@@ -424,6 +424,85 @@ def sessions_by_day(conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
+def pushfold_training_by_day(conn: sqlite3.Connection) -> list[dict]:
+    """Uma linha por dia de treino do Modo Estudo (`quiz_log`) — mesma
+    aproximação de `sessions_by_day()` pra sessões de jogo real: duração
+    = intervalo entre a primeira e a última resposta daquele dia, não
+    tempo engajado de verdade (pausas no meio contam como treino). Sem
+    isso, não teríamos NENHUMA noção de duração — a alternativa seria
+    inventar um número, o que é pior."""
+    rows = conn.execute(
+        """SELECT to_char(ts::timestamp, 'YYYY-MM-DD') AS day,
+                  COUNT(*) AS n, SUM(correct) AS n_correct,
+                  SUM(ev_lost_bb) AS total_ev_lost,
+                  MIN(ts) AS t_start, MAX(ts) AS t_end
+           FROM quiz_log
+           WHERE ts IS NOT NULL
+           GROUP BY day"""
+    ).fetchall()
+    out = []
+    for day, n, n_correct, total_ev_lost, t_start, t_end in rows:
+        a, b = _parse_ts(t_start), _parse_ts(t_end)
+        duration_min = round((b - a).total_seconds() / 60) if a and b and b > a else 0
+        out.append({
+            "date": day,
+            "hands": n,
+            "correct": n_correct or 0,
+            "accuracy_pct": round((n_correct or 0) / n * 100, 1) if n else None,
+            "avg_ev_lost_bb": round(total_ev_lost / n, 3) if n and total_ev_lost is not None else None,
+            "duration_min": duration_min,
+        })
+    out.sort(key=lambda r: r["date"], reverse=True)
+    return out
+
+
+def pushfold_training_day_detail(conn: sqlite3.Connection, date: str) -> dict:
+    """Detalhe de um dia de treino: cada resposta (com link pro Replayer
+    via site+hand_id), distribuição de stack efetivo das mãos usadas
+    (join com `hands`, mesmos buckets de `stack_bucket_stats`), e as
+    sessões de jogo REAL do mesmo dia (mesma data de calendário — não há
+    FK entre quiz_log e torneio, o cruzamento é só por data)."""
+    answer_rows = conn.execute(
+        """SELECT q.site, q.hand_id, q.ts, q.user_decision, q.nash_decision,
+                  q.correct, q.ev_lost_bb, h.hero_stack_bb, h.hero_position
+           FROM quiz_log q
+           LEFT JOIN hands h ON h.site = q.site AND h.hand_id = q.hand_id
+           WHERE to_char(q.ts::timestamp, 'YYYY-MM-DD') = ?
+           ORDER BY q.ts""",
+        (date,),
+    ).fetchall()
+    answers = [{
+        "site": site, "hand_id": hand_id, "ts": ts,
+        "user_decision": user_decision, "nash_decision": nash_decision,
+        "correct": bool(correct), "ev_lost_bb": ev_lost_bb,
+        "hero_stack_bb": stack_bb, "hero_position": position,
+    } for site, hand_id, ts, user_decision, nash_decision, correct, ev_lost_bb,
+          stack_bb, position in answer_rows]
+
+    stack_buckets = []
+    for lo, hi in STACK_BUCKETS:
+        n = sum(1 for a in answers if a["hero_stack_bb"] is not None and lo <= a["hero_stack_bb"] < hi)
+        if n:
+            stack_buckets.append({"bucket": f"{lo:g}-{hi:g}BB", "hands": n})
+
+    session_rows = conn.execute(
+        """SELECT t.site, COUNT(*) AS tournaments,
+                  SUM(CASE WHEN t.finish_position IS NOT NULL THEN t.buyin ELSE 0 END) AS invested,
+                  SUM(CASE WHEN t.finish_position IS NOT NULL THEN COALESCE(t.prize, 0) ELSE 0 END) AS won,
+                  SUM(CASE WHEN t.finish_position IS NOT NULL THEN 1 ELSE 0 END) AS with_result
+           FROM tournaments t
+           WHERE to_char(t.first_seen::timestamp, 'YYYY-MM-DD') = ?
+           GROUP BY t.site""",
+        (date,),
+    ).fetchall()
+    sessions = [{
+        "site": site, "tournaments": n_t,
+        "profit": round((won or 0) - (invested or 0), 2) if with_result else None,
+    } for site, n_t, invested, won, with_result in session_rows]
+
+    return {"date": date, "answers": answers, "stack_buckets": stack_buckets, "sessions": sessions}
+
+
 def profit_by_buyin(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         """SELECT buyin, COUNT(*), SUM(buyin), SUM(COALESCE(prize, 0)),

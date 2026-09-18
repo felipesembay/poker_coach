@@ -46,6 +46,7 @@ const groups = [
     label: "Treino",
     items: [
       { title: "Push/Fold", url: "/push-fold", icon: Target },
+      { title: "Evolução Push/Fold", url: "/evolucao", icon: TrendingUp },
       { title: "Leak Finder", url: "/leaks", icon: AlertTriangle },
       { title: "ICM", url: "/icm", icon: Coins },
       { title: "Coach IA", url: "/coach", icon: Brain },
@@ -56,7 +57,6 @@ const groups = [
     items: [
       { title: "Favoritos", url: "/favoritos", icon: Star },
       { title: "Tags", url: "/tags", icon: Tag },
-      { title: "Evolução", url: "/evolucao", icon: TrendingUp },
       { title: "Configurações", url: "/configuracoes", icon: Settings },
     ],
   },

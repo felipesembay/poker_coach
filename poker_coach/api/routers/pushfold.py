@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from poker_coach import db as dbm  # noqa: E402
+from poker_coach import stats  # noqa: E402
 from poker_coach.models import Hand as HandModel, Seat  # noqa: E402
 from poker_coach.pushfold import analyze as pf  # noqa: E402
 from poker_coach.pushfold import equity as eq  # noqa: E402
@@ -513,5 +514,68 @@ def trainer_stats():
     conn = _conn()
     try:
         return TrainerStatsOut(**dbm.quiz_stats(conn))
+    finally:
+        conn.close()
+
+
+class TrainingDayOut(BaseModel):
+    date: str
+    hands: int
+    correct: int
+    accuracy_pct: float | None
+    avg_ev_lost_bb: float | None
+    duration_min: int
+
+
+@router.get("/trainer/by-day", response_model=list[TrainingDayOut])
+def trainer_by_day():
+    """Evolução do treino do Modo Estudo por dia — ver docstring de
+    stats.pushfold_training_by_day pra limitação de "duração" (aproximada,
+    não é tempo engajado real)."""
+    conn = _conn()
+    try:
+        return stats.pushfold_training_by_day(conn)
+    finally:
+        conn.close()
+
+
+class TrainingAnswerOut(BaseModel):
+    site: str
+    hand_id: str
+    ts: str
+    user_decision: str
+    nash_decision: str
+    correct: bool
+    ev_lost_bb: float | None
+    hero_stack_bb: float | None
+    hero_position: str | None
+
+
+class TrainingStackBucketOut(BaseModel):
+    bucket: str
+    hands: int
+
+
+class TrainingSessionOut(BaseModel):
+    site: str
+    tournaments: int
+    profit: float | None
+
+
+class TrainingDayDetailOut(BaseModel):
+    date: str
+    answers: list[TrainingAnswerOut]
+    stack_buckets: list[TrainingStackBucketOut]
+    sessions: list[TrainingSessionOut]
+
+
+@router.get("/trainer/by-day/{date}", response_model=TrainingDayDetailOut)
+def trainer_by_day_detail(date: str):
+    """Drill-down de um dia: cada resposta (linka pro Replayer via
+    site+hand_id), distribuição de stack das mãos usadas, e as sessões de
+    jogo REAL da mesma data de calendário (sem FK — cruzamento por data)."""
+    conn = _conn()
+    try:
+        return stats.pushfold_training_day_detail(conn, date)
     finally:
         conn.close()

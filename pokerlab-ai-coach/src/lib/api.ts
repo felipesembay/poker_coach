@@ -170,6 +170,40 @@ export const trainerApi = {
       body: JSON.stringify({ site, hand_id, mode, decision, hero_cards }),
     }),
   stats: () => request<TrainerStats>("/api/pushfold/trainer/stats"),
+  byDay: () => request<TrainingDay[]>("/api/pushfold/trainer/by-day"),
+  byDayDetail: (date: string) =>
+    request<TrainingDayDetail>(`/api/pushfold/trainer/by-day/${date}`),
+};
+
+export type TrainingDay = {
+  date: string;
+  hands: number;
+  correct: number;
+  accuracy_pct: number | null;
+  avg_ev_lost_bb: number | null;
+  duration_min: number;
+};
+
+export type TrainingAnswer = {
+  site: string;
+  hand_id: string;
+  ts: string;
+  user_decision: string;
+  nash_decision: string;
+  correct: boolean;
+  ev_lost_bb: number | null;
+  hero_stack_bb: number | null;
+  hero_position: string | null;
+};
+
+export type TrainingStackBucket = { bucket: string; hands: number };
+export type TrainingSession = { site: string; tournaments: number; profit: number | null };
+
+export type TrainingDayDetail = {
+  date: string;
+  answers: TrainingAnswer[];
+  stack_buckets: TrainingStackBucket[];
+  sessions: TrainingSession[];
 };
 
 // ---------------- ICM ----------------
