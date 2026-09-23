@@ -105,6 +105,55 @@ def cmd_export_rl(args):
             print(f"  {e}")
 
 
+def cmd_adaptive_trainer(args):
+    import pandas as pd
+
+    from .rl import adaptive_trainer as at
+    from .rl import personal_policy as pp
+
+    conn = dbm.connect(args.db)
+    policy = pp.load_policy(args.policy) if args.policy else None
+    df = pd.read_parquet(args.dataset) if args.dataset else None
+
+    def next_situation():
+        if args.source == "historical":
+            if df is None:
+                print("--source historical precisa de --dataset")
+                sys.exit(1)
+            s = at.historical_situation(df)
+            if s is not None:
+                return s
+            print("Sem spots preflop_open utilizáveis no dataset — usando sintético.")
+        return at.synthetic_situation(bb_min=args.bb_min, bb_max=args.bb_max)
+
+    if args.action:
+        situation = next_situation()
+        print(at.format_situation(situation))
+        feedback = at.evaluate_response(situation, args.action, personal_policy=policy)
+        print(at.format_feedback(feedback))
+        at.log_feedback(conn, feedback)
+        conn.commit()
+        return
+
+    print(f"Adaptive Trainer — {args.rounds} rodada(s). Digite 'push' ou 'fold'.")
+    for i in range(args.rounds):
+        situation = next_situation()
+        print(f"\n[{i + 1}/{args.rounds}] {at.format_situation(situation)}")
+        while True:
+            resp = input("Sua ação (push/fold): ").strip().lower()
+            if resp in ("push", "fold"):
+                break
+            print("Digite 'push' ou 'fold'.")
+        feedback = at.evaluate_response(situation, resp, personal_policy=policy)
+        print(at.format_feedback(feedback))
+        at.log_feedback(conn, feedback)
+        conn.commit()
+
+    stats = dbm.adaptive_trainer_stats(conn)
+    print(f"\n=== Sessão encerrada — histórico geral: {stats['correct']}/{stats['total']} "
+          f"({stats['pct']}%) | EV gap médio: {stats['avg_ev_gap_bb']} BB ===")
+
+
 def cmd_backfill_decision_analysis(args):
     from .rl import backfill_decision_analysis as rl_backfill
 
@@ -242,6 +291,17 @@ def main():
     pl.add_argument("--min-confidence", choices=["baixa", "média", "alta"], default="média",
                      dest="min_confidence")
     pl.set_defaults(func=cmd_leak_report)
+
+    pad = sub.add_parser("adaptive-trainer", help="Adaptive Trainer: sessão interativa de push/fold")
+    pad.add_argument("--dataset", default=None, help="parquet do export-rl, pra spots históricos")
+    pad.add_argument("--source", choices=["synthetic", "historical"], default="synthetic")
+    pad.add_argument("--policy", default=None, help="personal_policy.pkl (Fase 2), opcional")
+    pad.add_argument("--rounds", type=int, default=5)
+    pad.add_argument("--bb-min", type=float, default=5.0, dest="bb_min")
+    pad.add_argument("--bb-max", type=float, default=40.0, dest="bb_max")
+    pad.add_argument("--action", choices=["push", "fold"], default=None,
+                      help="modo não-interativo: 1 rodada só, sem prompt")
+    pad.set_defaults(func=cmd_adaptive_trainer)
 
     args = p.parse_args()
     args.func(args)

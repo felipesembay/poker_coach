@@ -33,6 +33,16 @@ def full_deck() -> list[Card]:
     return [(r, s) for r in RANK_VALUE.values() for s in SUITS]
 
 
+def card_str(card: Card) -> str:
+    """Inverso de `parse_card`: (13, 'h') -> 'Kh'."""
+    rank, suit = card
+    return f"{RANKS[rank - 2]}{suit}"
+
+
+def hand_str(cards: list[Card]) -> str:
+    return " ".join(card_str(c) for c in cards)
+
+
 def _check_straight(ranks5: list[int]) -> tuple[bool, int]:
     s = set(ranks5)
     if len(s) != 5:

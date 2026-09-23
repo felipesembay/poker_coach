@@ -10,7 +10,7 @@
 # Fase 2 (Behavioral Cloning / Personal Policy)
 scikit-learn>=1.9
 
-# Fase 2b/4 (push/fold RL, self-play) — instalar só quando chegar lá:
-# gymnasium
-# stable-baselines3
-# torch
+# Fase 4 (push/fold RL — pushfold_env.py, train_pushfold_ppo.py)
+gymnasium>=1.3
+stable-baselines3>=2.9
+# torch vem junto via stable-baselines3 (CPU local; no Colab já vem com CUDA)

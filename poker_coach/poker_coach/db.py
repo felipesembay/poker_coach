@@ -191,6 +191,24 @@ CREATE TABLE IF NOT EXISTS quiz_log (
     ev_lost_bb REAL
 );
 
+CREATE TABLE IF NOT EXISTS adaptive_trainer_log (
+    id SERIAL PRIMARY KEY,
+    ts TEXT NOT NULL,
+    source TEXT NOT NULL,       -- "historical" | "synthetic"
+    site TEXT,                  -- só preenchido quando source="historical"
+    hand_id TEXT,
+    position TEXT,
+    hero_cards TEXT NOT NULL,
+    effective_bb REAL NOT NULL,
+    pot_bb REAL NOT NULL,
+    user_action TEXT NOT NULL,
+    personal_policy_action TEXT,    -- argmax da Personal Policy (Fase 2), se carregada
+    reference_action TEXT NOT NULL, -- Nash (motor existente)
+    ev_user_bb REAL NOT NULL,
+    ev_reference_bb REAL NOT NULL,
+    ev_gap_bb REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS decision_analysis (
     site TEXT NOT NULL,
     hand_id TEXT NOT NULL,
@@ -425,6 +443,52 @@ def quiz_stats(conn: PGConnection) -> dict:
     return {
         "total": total or 0, "correct": correct or 0,
         "pct": round((correct or 0) / total * 100, 1) if total else None,
+    }
+
+
+# ---------------- Adaptive Trainer (seção 19 do plano de RL) ----------------
+
+def log_adaptive_trainer_answer(
+    conn: PGConnection, *, source: str, site: str | None, hand_id: str | None,
+    position: str | None, hero_cards: str, effective_bb: float, pot_bb: float,
+    user_action: str, personal_policy_action: str | None, reference_action: str,
+    ev_user_bb: float, ev_reference_bb: float, ev_gap_bb: float,
+) -> None:
+    import datetime as _dt
+    conn.execute(
+        """INSERT INTO adaptive_trainer_log (
+               ts, source, site, hand_id, position, hero_cards, effective_bb, pot_bb,
+               user_action, personal_policy_action, reference_action,
+               ev_user_bb, ev_reference_bb, ev_gap_bb
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (_dt.datetime.now().isoformat(timespec="seconds"), source, site, hand_id,
+         position, hero_cards, effective_bb, pot_bb, user_action, personal_policy_action,
+         reference_action, ev_user_bb, ev_reference_bb, ev_gap_bb),
+    )
+
+
+def adaptive_trainer_stats(conn: PGConnection) -> dict:
+    """Evolução ao longo do tempo (seção 19: "isso permitirá futuramente
+    medir evolução") — agregado geral + por dia, igual ao padrão já usado
+    em `quiz_stats`/`stats.pushfold_training_by_day`."""
+    row = conn.execute(
+        "SELECT COUNT(*), SUM((user_action = reference_action)::int), AVG(ev_gap_bb) "
+        "FROM adaptive_trainer_log"
+    ).fetchone()
+    total, correct, avg_gap = row
+    by_day = conn.execute(
+        "SELECT ts::date AS day, COUNT(*), "
+        "SUM((user_action = reference_action)::int), AVG(ev_gap_bb) "
+        "FROM adaptive_trainer_log GROUP BY day ORDER BY day"
+    ).fetchall()
+    return {
+        "total": total or 0, "correct": correct or 0,
+        "pct": round((correct or 0) / total * 100, 1) if total else None,
+        "avg_ev_gap_bb": round(avg_gap, 3) if avg_gap is not None else None,
+        "by_day": [
+            {"day": str(day), "n": n, "correct": c, "avg_ev_gap_bb": round(g, 3) if g is not None else None}
+            for day, n, c, g in by_day
+        ],
     }
 
 
