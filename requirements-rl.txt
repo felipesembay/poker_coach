@@ -1,0 +1,16 @@
+# Dependências do pipeline de RL (poker_coach/poker_coach/rl/) — separadas
+# do venv de produção do FastAPI de propósito (ver plano: não misturar RL
+# com o import graph do backend). Instalar dentro do mesmo .venv do
+# projeto só quando for rodar export-rl/train-bc localmente:
+#   pip install -r requirements-rl.txt
+
+# Fase 1 (export/audit): já cobertas por deps existentes do projeto
+# (pandas, pyarrow, psycopg2-binary) — nada novo aqui.
+
+# Fase 2 (Behavioral Cloning / Personal Policy)
+scikit-learn>=1.9
+
+# Fase 2b/4 (push/fold RL, self-play) — instalar só quando chegar lá:
+# gymnasium
+# stable-baselines3
+# torch

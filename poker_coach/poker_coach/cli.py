@@ -67,6 +67,84 @@ def cmd_pushfold(args):
               f"| EV do push: {r.ev_push_bb:+.2f} BB | perdeu {r.ev_lost_bb:.2f} BB")
 
 
+def cmd_audit_rl(args):
+    from .rl import audit as rl_audit
+
+    def progress(i, total):
+        if total and i % 200 == 0:
+            print(f"  ...{i}/{total}", file=sys.stderr, flush=True)
+
+    print(f"Auditando dataset de decisão do hero (Fase 0 do plano de RL, {args.workers} workers)...")
+    report = rl_audit.run_audit_parallel(args.db, site=args.site, workers=args.workers, progress=progress)
+    print()
+    print(rl_audit.format_report(report))
+
+
+def cmd_export_rl(args):
+    from .rl import export as rl_export
+
+    def progress(i, total):
+        if total and i % 200 == 0:
+            print(f"  ...{i}/{total}", file=sys.stderr, flush=True)
+
+    print(f"Exportando dataset de decisão do hero para {args.out} "
+          f"({args.format}, {args.workers} workers, "
+          f"{args.equity_iterations or 'default'} iterações de equity"
+          f"{', retomando checkpoint existente' if args.resume else ''})...")
+    stats = rl_export.export_dataset_parallel(
+        args.db, args.out, site=args.site, format=args.format,
+        workers=args.workers, equity_iterations=args.equity_iterations,
+        resume=args.resume, progress=progress,
+    )
+    print(f"Mãos: {stats.hands_ok} OK, {stats.hands_discarded_no_hero} descartadas "
+          f"(sem hero/cartas), {stats.hands_error} com erro")
+    print(f"Decisões exportadas: {stats.decisions}")
+    if stats.errors:
+        print(f"Erros (mostrando até 20 de {len(stats.errors)}):")
+        for e in stats.errors[:20]:
+            print(f"  {e}")
+
+
+def cmd_backfill_decision_analysis(args):
+    from .rl import backfill_decision_analysis as rl_backfill
+
+    conn = dbm.connect(args.db)
+
+    def progress(i, total):
+        if total and i % 500 == 0:
+            print(f"  ...{i}/{total}", file=sys.stderr)
+
+    print("Populando decision_analysis a partir de todas as mãos importadas...")
+    stats = rl_backfill.backfill(conn, site=args.site, progress=progress)
+    print()
+    print(rl_backfill.format_report(stats))
+
+
+def cmd_leak_report(args):
+    import pandas as pd
+
+    from .rl import leak_detector as ld
+
+    df = pd.read_parquet(args.dataset)
+    report = ld.build_leak_report(df)
+    print(ld.format_leak_report(report, min_confidence=args.min_confidence))
+
+
+def cmd_train_bc(args):
+    import pandas as pd
+
+    from .rl import personal_policy as pp
+
+    print(f"Carregando dataset de {args.dataset}...")
+    df = pd.read_parquet(args.dataset)
+    report, pipeline = pp.train_and_evaluate(df)
+    print()
+    print(pp.format_report(report))
+    if args.out:
+        pp.save_policy(pipeline, args.out)
+        print(f"\nPersonal Policy salva em {args.out}")
+
+
 def cmd_result(args):
     conn = dbm.connect(args.db)
     dbm.set_result(conn, args.site, args.tournament_id, args.position, args.prize)
@@ -129,6 +207,41 @@ def main():
     pf.add_argument("--bb-min", type=float, default=5.0, dest="bb_min")
     pf.add_argument("--bb-max", type=float, default=25.0, dest="bb_max")
     pf.set_defaults(func=cmd_pushfold)
+
+    pa = sub.add_parser("audit-rl", help="Fase 0 do plano de RL: audita o dataset de decisão do hero")
+    pa.add_argument("--site", default=None)
+    pa.add_argument("--workers", type=int, default=None, help="padrão: min(cpus, 16)")
+    pa.set_defaults(func=cmd_audit_rl)
+
+    pe = sub.add_parser("export-rl", help="Fase 1 do plano de RL: exporta o dataset de decisão do hero")
+    pe.add_argument("--out", required=True)
+    pe.add_argument("--site", default=None)
+    pe.add_argument("--format", choices=["parquet", "csv"], default="parquet")
+    pe.add_argument("--workers", type=int, default=None, help="padrão: min(cpus, 16)")
+    pe.add_argument("--equity-iterations", type=int, default=None, dest="equity_iterations",
+                     help="padrão: DEFAULT_MC_ITERATIONS do equity engine (20000). "
+                          "Reduzir troca precisão de hero_equity/ev_gap por velocidade "
+                          "(ex.: 2000) — ação/behavior do dataset não é afetada.")
+    pe.add_argument("--resume", action="store_true",
+                     help="se --out já existe, pula as mãos já presentes nele e só "
+                          "processa o resto (não reprocessa do zero um export interrompido)")
+    pe.set_defaults(func=cmd_export_rl)
+
+    pb = sub.add_parser("backfill-decision-analysis",
+                         help="Fase 1B do plano de RL: popula decision_analysis pra todas as mãos")
+    pb.add_argument("--site", default=None)
+    pb.set_defaults(func=cmd_backfill_decision_analysis)
+
+    pt = sub.add_parser("train-bc", help="Fase 2 do plano de RL: treina a Personal Policy (Behavioral Cloning)")
+    pt.add_argument("--dataset", required=True, help="parquet gerado por export-rl")
+    pt.add_argument("--out", default=None, help="onde salvar o modelo treinado (joblib .pkl)")
+    pt.set_defaults(func=cmd_train_bc)
+
+    pl = sub.add_parser("leak-report", help="Fase 3 do plano de RL: relatório do Leak Detector")
+    pl.add_argument("--dataset", required=True, help="parquet gerado por export-rl")
+    pl.add_argument("--min-confidence", choices=["baixa", "média", "alta"], default="média",
+                     dest="min_confidence")
+    pl.set_defaults(func=cmd_leak_report)
 
     args = p.parse_args()
     args.func(args)
