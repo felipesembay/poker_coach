@@ -141,6 +141,10 @@ export type TrainerAnswer = {
   ev_bb: number;
   ev_lost_bb: number;
   explanation: string;
+  // Personal Policy (Fase 2 do plano de RL, Behavioral Cloning) — null
+  // quando o modelo treinado não existe no backend, nunca quebra a tela.
+  personal_policy_decision?: string | null;
+  personal_policy_probs?: Record<string, number> | null;
 };
 
 export type TrainerStats = { total: number; correct: number; pct: number | null };

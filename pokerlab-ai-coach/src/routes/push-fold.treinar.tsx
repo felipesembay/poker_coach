@@ -534,6 +534,25 @@ function Trainer() {
                         {feedback0.nash_decision}
                       </span>
                     </div>
+                    {feedback0.personal_policy_decision && (
+                      <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
+                        <span className="text-xs text-muted-foreground">
+                          Personal Policy
+                          <span className="ml-1 opacity-70">(o que você costuma fazer)</span>
+                        </span>
+                        <span className="num text-sm font-semibold">
+                          {feedback0.personal_policy_decision}
+                          {feedback0.personal_policy_probs && (
+                            <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                              {Math.round(
+                                Math.max(...Object.values(feedback0.personal_policy_probs)) * 100,
+                              )}
+                              %
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between rounded-md border border-border bg-elevated/50 px-3 py-2">
                       <span className="text-xs text-muted-foreground">
                         {q0?.mode === "facing_shove" ? "EV do call" : "EV do shove"}

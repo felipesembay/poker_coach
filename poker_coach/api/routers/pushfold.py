@@ -402,6 +402,54 @@ class TrainerAnswerOut(BaseModel):
     ev_bb: float
     ev_lost_bb: float
     explanation: str  # templado a partir dos números, não é prosa gerada por IA
+    # Personal Policy (Fase 2, Behavioral Cloning) — opcional: None quando o
+    # artefato treinado não existe em disco (ver PERSONAL_POLICY_PATH em
+    # deps.py). Nunca quebra o endpoint por falta de modelo (seção 18 do
+    # plano de RL).
+    personal_policy_decision: str | None = None
+    personal_policy_probs: dict[str, float] | None = None
+
+
+# Import pesado (scikit-learn/joblib) fica de fora do import graph normal
+# do FastAPI — só carrega se/quando o artefato treinado existir, e só na
+# primeira chamada que precisar dele (lazy, memoizado no processo).
+_personal_policy = None
+_personal_policy_load_attempted = False
+
+
+def _get_personal_policy():
+    global _personal_policy, _personal_policy_load_attempted
+    if _personal_policy_load_attempted:
+        return _personal_policy
+    _personal_policy_load_attempted = True
+    try:
+        import os
+
+        from ..deps import PERSONAL_POLICY_PATH
+        if os.path.exists(PERSONAL_POLICY_PATH):
+            from poker_coach.rl import personal_policy as pp
+            _personal_policy = pp.load_policy(PERSONAL_POLICY_PATH)
+    except Exception:  # noqa: BLE001 — ausência/erro de modelo nunca derruba o endpoint
+        _personal_policy = None
+    return _personal_policy
+
+
+def _personal_policy_fields(*, context_type: str, position: str, hero_cards: str,
+                             effective_bb: float, pot_bb: float) -> tuple[str | None, dict | None]:
+    policy = _get_personal_policy()
+    if policy is None:
+        return None, None
+    state = dict(
+        street="preflop", position=position, hero_cards=hero_cards, context_type=context_type,
+        effective_stack_bb=effective_bb, pot_before_action_bb=pot_bb,
+    )
+    try:
+        probs = policy.predict_proba(state)
+        action = policy.recommend(state)
+    except Exception:  # noqa: BLE001
+        return None, None
+    label = {"push": "All-in", "fold": "Fold", "call": "Call"}.get(action, action.capitalize())
+    return label, probs
 
 
 @router.post("/trainer/answer", response_model=TrainerAnswerOut)
@@ -433,9 +481,15 @@ def trainer_answer(payload: TrainerAnswerIn):
                 else:
                     explanation = (f"Nash manda foldar: o push teria EV {ev_push_bb:+.2f} BB "
                                     f"(negativo) contra a range de call da BB.")
+                pp_decision, pp_probs = _personal_policy_fields(
+                    context_type="preflop_open", position=row.position, hero_cards=hero_cards,
+                    effective_bb=row.effective_bb, pot_bb=row.pot_bb,
+                )
                 return TrainerAnswerOut(correct=correct, nash_decision=nash_label,
                                          ev_bb=ev_push_bb, ev_lost_bb=ev_lost,
-                                         explanation=explanation)
+                                         explanation=explanation,
+                                         personal_policy_decision=pp_decision,
+                                         personal_policy_probs=pp_probs)
 
             nash_label: Literal["Fold", "All-in", "Call"] = (
                 "All-in" if row.nash_decision == "push" else "Fold")
@@ -451,9 +505,15 @@ def trainer_answer(payload: TrainerAnswerIn):
             else:
                 explanation = (f"Nash manda foldar: o push teria EV {row.ev_push_bb:+.2f} BB "
                                 f"(negativo) contra a range de call da BB.")
+            pp_decision, pp_probs = _personal_policy_fields(
+                context_type="preflop_open", position=row.position, hero_cards=hero_cards,
+                effective_bb=row.effective_bb, pot_bb=row.pot_bb,
+            )
             return TrainerAnswerOut(correct=correct, nash_decision=nash_label,
                                      ev_bb=row.ev_push_bb, ev_lost_bb=ev_lost,
-                                     explanation=explanation)
+                                     explanation=explanation,
+                                     personal_policy_decision=pp_decision,
+                                     personal_policy_probs=pp_probs)
 
         frow = pf.analyze_facing_shove_hand_row(conn, payload.site, payload.hand_id, precise=False)
         if frow is None:
@@ -479,8 +539,14 @@ def trainer_answer(payload: TrainerAnswerIn):
             else:
                 explanation = (f"Nash manda foldar: o call teria EV {ev_call_bb:+.2f} BB "
                                 f"(negativo) contra a range de all-in de {frow.shover_position}.")
+            pp_decision, pp_probs = _personal_policy_fields(
+                context_type="preflop_facing_allin", position=frow.position, hero_cards=hero_cards,
+                effective_bb=frow.effective_bb, pot_bb=frow.pot_bb,
+            )
             return TrainerAnswerOut(correct=correct, nash_decision=nash_label,
-                                     ev_bb=ev_call_bb, ev_lost_bb=ev_lost, explanation=explanation)
+                                     ev_bb=ev_call_bb, ev_lost_bb=ev_lost, explanation=explanation,
+                                     personal_policy_decision=pp_decision,
+                                     personal_policy_probs=pp_probs)
 
         nash_label = "Call" if frow.nash_decision == "call" else "Fold"
         correct = payload.decision == nash_label
@@ -496,8 +562,14 @@ def trainer_answer(payload: TrainerAnswerIn):
         else:
             explanation = (f"Nash manda foldar: o call teria EV {frow.ev_call_bb:+.2f} BB "
                             f"(negativo) contra a range de all-in de {frow.shover_position}.")
+        pp_decision, pp_probs = _personal_policy_fields(
+            context_type="preflop_facing_allin", position=frow.position, hero_cards=hero_cards,
+            effective_bb=frow.effective_bb, pot_bb=frow.pot_bb,
+        )
         return TrainerAnswerOut(correct=correct, nash_decision=nash_label,
-                                 ev_bb=frow.ev_call_bb, ev_lost_bb=ev_lost, explanation=explanation)
+                                 ev_bb=frow.ev_call_bb, ev_lost_bb=ev_lost, explanation=explanation,
+                                 personal_policy_decision=pp_decision,
+                                 personal_policy_probs=pp_probs)
     finally:
         conn.close()
 
