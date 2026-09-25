@@ -16,6 +16,14 @@ PERSONAL_POLICY_PATH = str(
     Path(__file__).resolve().parents[2] / "datasets" / "personal_policy.pkl"
 )
 
+# Dataset exportado pela Fase 1 (rl/export.py — python -m poker_coach.cli
+# export-rl). Snapshot periódico, não live — mesmo espírito do artefato da
+# Personal Policy: recomputa quando `export-rl`/`train-bc` rodam de novo,
+# não a cada request. Usado pelo Leak Detector (Fase 3).
+RL_DATASET_PATH = str(
+    Path(__file__).resolve().parents[2] / "datasets" / "poker_coach_decisions.parquet"
+)
+
 
 def get_conn() -> Iterator[dbm.PGConnection]:
     conn = dbm.connect(DSN)
@@ -23,3 +31,20 @@ def get_conn() -> Iterator[dbm.PGConnection]:
         yield conn
     finally:
         conn.close()
+
+
+def get_personal_policy():
+    """Carrega a Personal Policy (Fase 2) uma vez por caminho de arquivo
+    (memoizado — ver `personal_policy.load_policy_cached`), `None` se o
+    artefato não existir ou falhar ao carregar. Nunca levanta exceção —
+    quem chama trata `None` como "sem comparação disponível", não como
+    erro (seção 18 do plano de RL: nunca quebrar API por falta de
+    modelo)."""
+    import os
+    if not os.path.exists(PERSONAL_POLICY_PATH):
+        return None
+    try:
+        from poker_coach.rl import personal_policy as pp
+        return pp.load_policy_cached(PERSONAL_POLICY_PATH)
+    except Exception:  # noqa: BLE001
+        return None

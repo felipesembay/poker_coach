@@ -32,18 +32,20 @@ from dataclasses import dataclass
 
 def train_ppo(*, total_timesteps: int = 20_000, n_envs: int = 4, seed: int = 0,
               state_samples: list[tuple[float, float]] | None = None,
-              net_arch: list[int] | None = None):
+              net_arch: list[int] | None = None, env_cls=None, device: str = "cpu"):
     from stable_baselines3 import PPO
     from stable_baselines3.common.env_util import make_vec_env
 
     from .pushfold_env import PushFoldOpenEnv
 
+    env_cls = env_cls or PushFoldOpenEnv
+
     def _make():
-        return PushFoldOpenEnv(state_samples=state_samples, seed=seed)
+        return env_cls(state_samples=state_samples, seed=seed)
 
     vec_env = make_vec_env(_make, n_envs=n_envs, seed=seed)
     model = PPO(
-        "MlpPolicy", vec_env, verbose=0, seed=seed,
+        "MlpPolicy", vec_env, verbose=0, seed=seed, device=device,
         policy_kwargs=dict(net_arch=net_arch or [32, 32]),
     )
     model.learn(total_timesteps=total_timesteps)
@@ -75,23 +77,30 @@ class TrainingRunReport:
 
 def train_and_benchmark(*, total_timesteps: int = 20_000, seed: int = 0,
                          state_samples: list[tuple[float, float]] | None = None,
-                         grid_points: int = 15) -> tuple[TrainingRunReport, object]:
+                         grid_points: int = 15, env_cls=None,
+                         device: str = "cpu") -> tuple[TrainingRunReport, object]:
     """Treina e avalia contra o MESMO baseline aleatório antes/depois —
     prova que o treino de fato converge em direção ao Nash, não só reporta
-    um número solto."""
+    um número solto. `env_cls` (padrão `PushFoldOpenEnv`) também aceita
+    `PushFoldFacingShoveEnv` — mesma função serve pros dois lados do
+    equilíbrio, não precisa duplicar. `device` default `"cpu"`: rede
+    minúscula (`net_arch=[32,32]`) — overhead de transferência CPU↔GPU
+    supera o ganho (aviso do próprio SB3), CPU é mais rápido aqui."""
     import numpy as np
 
     from .pushfold_env import PushFoldOpenEnv, evaluate_against_nash
 
+    env_cls = env_cls or PushFoldOpenEnv
     rng = np.random.default_rng(seed)
 
     def random_predict(obs):
         return int(rng.integers(2))
 
-    before = evaluate_against_nash(PushFoldOpenEnv, random_predict, grid_points=grid_points, seed=seed)
+    before = evaluate_against_nash(env_cls, random_predict, grid_points=grid_points, seed=seed)
 
-    model = train_ppo(total_timesteps=total_timesteps, seed=seed, state_samples=state_samples)
-    after = evaluate_against_nash(PushFoldOpenEnv, agent_predict_fn(model), grid_points=grid_points, seed=seed)
+    model = train_ppo(total_timesteps=total_timesteps, seed=seed, state_samples=state_samples,
+                       env_cls=env_cls, device=device)
+    after = evaluate_against_nash(env_cls, agent_predict_fn(model), grid_points=grid_points, seed=seed)
 
     report = TrainingRunReport(total_timesteps=total_timesteps, benchmark_before=before, benchmark_after=after)
     return report, model

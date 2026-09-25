@@ -15,6 +15,7 @@ from .routers import (
     hands,
     icm,
     imports,
+    leak_detector,
     pushfold,
     replayer,
     stats,
@@ -46,6 +47,7 @@ app.include_router(favorites.router)
 app.include_router(imports.router)
 app.include_router(stats.router)
 app.include_router(decision_stats.router)
+app.include_router(leak_detector.router)
 
 
 @app.get("/api/health")

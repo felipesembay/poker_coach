@@ -268,13 +268,39 @@ class ContextualEVOut(BaseModel):
     assumptions: list[str]
 
 
+class PolicySuggestionOut(BaseModel):
+    """Personal Policy (Fase 2 do plano de RL, Behavioral Cloning) — "o que
+    você costuma fazer" nesse tipo de spot, não uma recomendação de EV
+    (isso continua sendo `nash`/`contextual` acima). `None` no campo
+    `policy` de `DecisionAnalysisOut` quando o artefato treinado não
+    existe — nunca quebra o endpoint por falta de modelo."""
+    recommended_action: str
+    probs: dict[str, float]
+
+
 class DecisionAnalysisOut(BaseModel):
     context: ContextOut
     nash: NashDecisionOut | None
     contextual: ContextualEVOut | None
+    policy: PolicySuggestionOut | None = None
 
 
-def _decision_analysis_out(analysis) -> DecisionAnalysisOut:
+def _policy_suggestion_out(rh, step: int, analysis) -> PolicySuggestionOut | None:
+    from ..deps import get_personal_policy
+
+    policy = get_personal_policy()
+    if policy is None:
+        return None
+    state = replay_decision.build_decision_analysis_record(rh, step, analysis)
+    try:
+        return PolicySuggestionOut(
+            recommended_action=policy.recommend(state), probs=policy.predict_proba(state),
+        )
+    except Exception:  # noqa: BLE001 — estado fora do que o modelo espera nunca derruba o endpoint
+        return None
+
+
+def _decision_analysis_out(analysis, policy_out: PolicySuggestionOut | None = None) -> DecisionAnalysisOut:
     ctx = ContextOut(
         context_type=analysis.context.context_type,
         recommended_model=analysis.context.recommended_model,
@@ -321,7 +347,7 @@ def _decision_analysis_out(analysis) -> DecisionAnalysisOut:
             ],
             equity=equity_out, pot_odds=pot_odds_out, model=c.model, assumptions=c.assumptions,
         )
-    return DecisionAnalysisOut(context=ctx, nash=nash_out, contextual=contextual_out)
+    return DecisionAnalysisOut(context=ctx, nash=nash_out, contextual=contextual_out, policy=policy_out)
 
 
 @router.get("/{site}/{hand_id}/decision/{step}", response_model=DecisionAnalysisOut)
@@ -331,9 +357,25 @@ def get_decision(site: str, hand_id: str, step: int,
                   persist: bool = Query(False, description=(
                       "Salva essa análise em decision_analysis (Etapa 7) pras estatísticas "
                       "de Preflop Model / Contextual Decision / Postflop Performance."
+                  )),
+                  force_recompute: bool = Query(False, description=(
+                      "Ignora o cache (decision_cache) e recalcula do zero — usar se a lógica "
+                      "de análise mudou e um resultado cacheado ficou desatualizado."
                   ))):
+    # Cache de resposta completa (não `decision_analysis`, que é write-only
+    # e serve outro propósito — ver docstring de `db.get_cached_decision`).
+    # Só serve do cache quando os parâmetros são os padrão: iterations/seed
+    # customizados são um pedido explícito de recálculo, não devem nem ler
+    # nem sobrescrever o cache "oficial" da mão/step.
+    use_cache = not force_recompute and equity_iterations is None and equity_seed is None
+
     conn = _conn()
     try:
+        if use_cache:
+            cached = dbm.get_cached_decision(conn, site, hand_id, step)
+            if cached is not None:
+                return DecisionAnalysisOut.model_validate_json(cached)
+
         rh = replay.load(conn, site, hand_id)
         if rh is None:
             raise HTTPException(404, "Mão não encontrada.")
@@ -357,6 +399,13 @@ def get_decision(site: str, hand_id: str, step: int,
             dbm.save_decision_analysis(conn, **record)
             conn.commit()
 
-        return _decision_analysis_out(analysis)
+        policy_out = _policy_suggestion_out(rh, step, analysis)
+        response = _decision_analysis_out(analysis, policy_out)
+
+        if use_cache:
+            dbm.save_cached_decision(conn, site, hand_id, step, response.model_dump_json())
+            conn.commit()
+
+        return response
     finally:
         conn.close()

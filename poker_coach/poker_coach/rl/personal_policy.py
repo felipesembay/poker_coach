@@ -22,6 +22,7 @@ uma vez, no modelo já escolhido — não usado pra escolher entre modelos
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -269,3 +270,12 @@ class PersonalPolicy:
 def load_policy(path: str) -> PersonalPolicy:
     import joblib
     return PersonalPolicy(joblib.load(path))
+
+
+@lru_cache(maxsize=4)
+def load_policy_cached(path: str) -> PersonalPolicy:
+    """Mesmo `load_policy`, memoizado por caminho — pro backend (FastAPI)
+    não desserializar o pipeline do zero a cada request. `maxsize=4` é
+    deliberado: nunca vai ter mais que 1-2 versões de artefato em uso ao
+    mesmo tempo num processo, não precisa de cache grande."""
+    return load_policy(path)

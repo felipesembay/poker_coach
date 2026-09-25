@@ -542,6 +542,17 @@ function Replayer() {
     if (s) lastActionMap[s.player] = { action: s.action, amount: s.amount, all_in: s.all_in };
   }
 
+  // Ficha na mesa (visual) só existe pra aposta da RUA ATUAL — ações de
+  // ruas anteriores já foram varridas pro pot (que já reflete isso em
+  // `pot_after`), senão a ficha ficaria "grudada" na mesa a mão toda.
+  const currentStreetStart = currentStep ? hand.street_first_index[currentStep.street] ?? 0 : 0;
+  const betAmountMap: Record<string, number> = {};
+  for (let i = currentStreetStart; i <= step; i++) {
+    const s = steps[i];
+    if (s && s.amount) betAmountMap[s.player] = s.amount;
+    else if (s) delete betAmountMap[s.player];
+  }
+
   const tableSeats: TableSeat[] = hand.seats.map((s) => {
     const la = lastActionMap[s.player];
     const stackNow = currentStep?.stacks_after[s.player] ?? s.starting_stack;
@@ -566,6 +577,7 @@ function Replayer() {
       cards: s.is_hero ? heroCards : s.cards ? s.cards.split(" ") : null,
       actionText,
       actionTone,
+      betAmount: betAmountMap[s.player] ?? null,
     };
   });
 
@@ -871,6 +883,37 @@ function Replayer() {
                               {decisionQ.data.nash.effective_bb.toFixed(1)} BB efetivo ·{" "}
                               {decisionQ.data.nash.pot_bb.toFixed(2)} BB de pote morto
                             </p>
+                          </div>
+                        )}
+
+                        {decisionQ.data.policy && (
+                          <div className="space-y-2 rounded-md border border-border bg-elevated/50 p-3 text-sm">
+                            <p className="text-xs uppercase tracking-[0.1em] text-muted-foreground">
+                              Personal Policy{" "}
+                              <span className="normal-case opacity-70">
+                                (o que você costuma fazer)
+                              </span>
+                            </p>
+                            <div className="flex items-center justify-between">
+                              <span className="capitalize">
+                                {decisionQ.data.policy.recommended_action}
+                              </span>
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {Math.round(
+                                  Math.max(...Object.values(decisionQ.data.policy.probs)) * 100,
+                                )}
+                                %
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
+                              {Object.entries(decisionQ.data.policy.probs)
+                                .sort((a, b) => b[1] - a[1])
+                                .map(([action, p]) => (
+                                  <span key={action} className="capitalize">
+                                    {action} <span className="num">{Math.round(p * 100)}%</span>
+                                  </span>
+                                ))}
+                            </div>
                           </div>
                         )}
 

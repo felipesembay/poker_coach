@@ -454,6 +454,10 @@ def _personal_policy_fields(*, context_type: str, position: str, hero_cards: str
 
 @router.post("/trainer/answer", response_model=TrainerAnswerOut)
 def trainer_answer(payload: TrainerAnswerIn):
+    # precise=False (matriz pré-computada) — precise=True fazia Monte Carlo
+    # ao vivo aqui e levava ~20-30s por resposta. O resto do app (batch
+    # report, /spots, Streamlit) já usa o caminho rápido; sem motivo pra
+    # esse endpoint ser o único lento.
     conn = _conn()
     try:
         if payload.mode == "open":

@@ -260,36 +260,43 @@ def stack_bucket_stats(conn: sqlite3.Connection,
                         buckets: list[tuple[float, float]] = STACK_BUCKETS) -> list[dict]:
     """Por faixa de stack efetivo (hero_stack_bb no início da mão): spots,
     fold/push/call % no preflop e saldo em BB — a tabela "0-5BB / 5-10BB /
-    ..." pedida no dashboard de Stack."""
+    ..." pedida no dashboard de Stack.
+
+    Uma query só (LATERAL JOIN pra pegar a primeira ação preflop
+    voluntária do hero por mão), não N+1 — antes disso era 1 query por
+    mão dentro de um loop Python (milhares de round-trips ao Postgres
+    numa carga de página só, ver achado de performance)."""
+    # LEFT (não inner) JOIN LATERAL de propósito: uma mão sem nenhuma ação
+    # preflop voluntária do hero (ex. só postou blind e todo mundo foldou
+    # antes dele agir) não pode simplesmente desaparecer da contagem de
+    # `spots` — ela ainda é uma mão naquela faixa de stack, só não entra
+    # no denominador de fold/push/call % (mesma semântica do código
+    # original, que fazia `if not first: continue` só pra essa parte).
+    rows = conn.execute(
+        """SELECT h.hero_stack_bb, h.hero_net_chips, h.bb, a.action, a.all_in
+           FROM hands h
+           LEFT JOIN LATERAL (
+               SELECT action, all_in FROM actions
+               WHERE site = h.site AND hand_id = h.hand_id
+                 AND street = 'preflop' AND player = h.hero
+                 AND action NOT IN ('post_sb', 'post_bb', 'post_ante')
+               ORDER BY ord LIMIT 1
+           ) a ON true
+           WHERE h.bb > 0"""
+    ).fetchall()
+
     out = []
     for lo, hi in buckets:
-        row = conn.execute(
-            """SELECT COUNT(*), SUM(CAST(hero_net_chips AS REAL) / bb)
-               FROM hands WHERE hero_stack_bb >= ? AND hero_stack_bb < ? AND bb > 0""",
-            (lo, hi),
-        ).fetchone()
-        spots, net_bb = row
-        if not spots:
-            out.append({"bucket": f"{lo:g}-{hi:g}BB", "spots": 0, "fold_pct": None,
-                        "push_pct": None, "call_pct": None, "net_bb": 0.0})
-            continue
-        hand_ids = conn.execute(
-            """SELECT site, hand_id, hero FROM hands
-               WHERE hero_stack_bb >= ? AND hero_stack_bb < ? AND bb > 0""",
-            (lo, hi),
-        ).fetchall()
+        spots = 0
+        net_bb_sum = 0.0
         folds = pushes = calls = counted = 0
-        for site, hand_id, hero in hand_ids:
-            first = conn.execute(
-                """SELECT action, all_in FROM actions
-                   WHERE site=? AND hand_id=? AND street='preflop' AND player=?
-                     AND action NOT IN ('post_sb','post_bb','post_ante')
-                   ORDER BY ord LIMIT 1""",
-                (site, hand_id, hero),
-            ).fetchone()
-            if not first:
+        for stack_bb, net_chips, bb, action, all_in in rows:
+            if not (lo <= stack_bb < hi):
                 continue
-            action, all_in = first
+            spots += 1
+            net_bb_sum += (net_chips or 0) / bb
+            if action is None:
+                continue
             counted += 1
             if action == "fold":
                 folds += 1
@@ -302,7 +309,7 @@ def stack_bucket_stats(conn: sqlite3.Connection,
             "fold_pct": round(folds / counted * 100, 1) if counted else None,
             "push_pct": round(pushes / counted * 100, 1) if counted else None,
             "call_pct": round(calls / counted * 100, 1) if counted else None,
-            "net_bb": round(net_bb or 0, 1),
+            "net_bb": round(net_bb_sum, 1),
         })
     return out
 

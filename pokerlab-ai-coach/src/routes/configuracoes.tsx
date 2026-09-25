@@ -34,6 +34,23 @@ export const Route = createFileRoute("/configuracoes")({
   component: SettingsPage,
 });
 
+// Queries que NÃO dependem de mãos/torneios importados — não faz sentido
+// invalidar (e refazer, gerando uma rajada de requests) essas junto:
+// leak-detector-* lê um snapshot estático (parquet do export-rl, não o
+// banco ao vivo), trainer-stats/pushfold-training-* vêm de quiz_log
+// (respostas do usuário, não das mãos em si), icm-payouts é estrutura
+// de premiação cadastrada manualmente. Lista de EXCLUSÃO em vez de
+// inclusão de propósito — uma tela nova que mostra dado de mão/torneio
+// fica coberta automaticamente, sem precisar lembrar de adicionar aqui.
+const IMPORT_UNRELATED_QUERY_KEYS = new Set([
+  "leak-detector-report",
+  "leak-detector-breakdown",
+  "trainer-stats",
+  "pushfold-training-by-day",
+  "pushfold-training-day",
+  "icm-payouts",
+]);
+
 const toggles = [
   { label: "Detecção automática de leaks", hint: "Analisa cada sessão importada", on: true },
   { label: "Resumo diário da IA", hint: "Enviado ao final de cada sessão", on: true },
@@ -53,8 +70,17 @@ function SettingsPage() {
       setResult(data);
       setSelectedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      // qualquer página que já tenha buscado mãos/torneios fica stale após importar
-      queryClient.invalidateQueries();
+      // Invalida tudo que É dado de mão/torneio (fica stale após
+      // importar), MENOS o que está em IMPORT_UNRELATED_QUERY_KEYS — sem
+      // filtro nenhum, isso disparava refetch simultâneo do app inteiro
+      // na navegação seguinte, incluindo telas sem nenhuma relação com
+      // hand history.
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey[0];
+          return typeof key === "string" && !IMPORT_UNRELATED_QUERY_KEYS.has(key);
+        },
+      });
     },
   });
 

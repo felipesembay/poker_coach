@@ -29,7 +29,7 @@ def test_partypoker():
     # "shows" nessa sala), casadas com o colchete logo após net/lost
     assert h1.shown_cards == {"Player3": "8h 6c", "Player4": "4c Tc", "Hero": "Kh 2h"}
 
-    assert h2.hero_position() == "UTG"
+    assert h2.hero_position() == "CO"  # 4-handed: única posição não-blind/BTN é CO, não UTG
     assert h2.hero_vpip() is False
     assert h2.hero_net_chips() == -7500  # fold, perde só o ante postado
     assert sum(h2.results.values()) == 0

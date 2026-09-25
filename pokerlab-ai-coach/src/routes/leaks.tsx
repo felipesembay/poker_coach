@@ -31,7 +31,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { leaksApi, type DecisionScope, type LeakCategory } from "@/lib/api";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  leakDetectorApi,
+  leaksApi,
+  type DecisionScope,
+  type LeakCategory,
+  type LeakConfidence,
+  type LeakDetectorBreakdownRow,
+} from "@/lib/api";
 
 export const Route = createFileRoute("/leaks")({
   head: () => ({
@@ -113,9 +121,16 @@ function LeaksPage() {
     <div className="space-y-5">
       <PageHeader
         title="Leak Finder"
-        description="Categorias de decisão (posição × faixa de stack) ordenadas pelo EV perdido frente à referência de Nash — não é análise de resultado, é análise de decisão."
+        description="Categorias de decisão ordenadas pelo EV perdido frente à referência de Nash — não é análise de resultado, é análise de decisão."
       />
 
+      <Tabs defaultValue="pushfold">
+        <TabsList>
+          <TabsTrigger value="pushfold">Push/Fold</TabsTrigger>
+          <TabsTrigger value="patterns">Padrões</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="pushfold" className="space-y-5">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="EV perdido total"
@@ -304,6 +319,200 @@ function LeaksPage() {
                           Abrir <ArrowUpRight className="ml-1 size-3.5" />
                         </Link>
                       </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </Panel>
+      )}
+        </TabsContent>
+
+        <TabsContent value="patterns">
+          <PatternsTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+const CONFIDENCE_TONE: Record<LeakConfidence, string> = {
+  alta: "text-profit border-profit/40",
+  média: "text-foreground border-border",
+  baixa: "text-muted-foreground border-dashed",
+};
+
+function categoryDisplayName(key: string): string {
+  // "postflop.over-fold" -> "postflop · over-fold" (mais legível, sem
+  // inventar rótulo novo — só formata o mesmo valor que o backend manda).
+  return key.replace(/\./g, " · ").replace(/_/g, " ");
+}
+
+function PatternsTab() {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [dimension, setDimension] = useState<"position" | "stack">("position");
+
+  const reportQ = useQuery({
+    queryKey: ["leak-detector-report"],
+    queryFn: leakDetectorApi.report,
+  });
+
+  const breakdownQ = useQuery({
+    queryKey: ["leak-detector-breakdown", selected, dimension],
+    queryFn: () => leakDetectorApi.breakdown(selected!, dimension),
+    enabled: !!selected,
+  });
+
+  const rows = reportQ.data?.by_category ?? [];
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Decisões no dataset"
+          value={reportQ.data ? String(reportQ.data.n_decisions) : "—"}
+        />
+        <StatCard
+          label="Com referência disponível"
+          value={reportQ.data ? String(reportQ.data.n_reference_available) : "—"}
+        />
+        <StatCard
+          label="Divergentes da referência"
+          value={reportQ.data ? String(reportQ.data.n_leaks) : "—"}
+          tone="loss"
+        />
+        <StatCard
+          label="Categorias"
+          value={reportQ.data ? String(rows.length) : "—"}
+        />
+      </div>
+
+      {reportQ.data && (
+        <div className="rounded-lg border border-dashed border-border bg-elevated/30 px-4 py-3 text-xs text-muted-foreground">
+          {reportQ.data.sizing_note}
+        </div>
+      )}
+
+      <Panel
+        title="Categorias de comportamento"
+        subtitle="Ordenado por amostra, não por EV — amostra pequena não é confiável. Clique numa linha para ver onde ela mais aparece."
+      >
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Categoria</TableHead>
+                <TableHead className="text-right">Amostra</TableHead>
+                <TableHead>Confiança</TableHead>
+                <TableHead className="text-right">Cobertura ref.</TableHead>
+                <TableHead className="text-right">EV gap médio</TableHead>
+                <TableHead className="text-right">EV gap mediano</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {reportQ.isLoading && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                    Carregando…
+                  </TableCell>
+                </TableRow>
+              )}
+              {reportQ.isError && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-10 text-center text-sm text-loss">
+                    Dataset não encontrado — rode{" "}
+                    <code className="num">python -m poker_coach.cli export-rl</code> primeiro.
+                  </TableCell>
+                </TableRow>
+              )}
+              {rows.map((r) => (
+                <TableRow
+                  key={r.leak_category}
+                  onClick={() => setSelected(r.leak_category)}
+                  className={
+                    selected === r.leak_category
+                      ? "cursor-pointer bg-accent/50"
+                      : "cursor-pointer hover:bg-accent/30"
+                  }
+                >
+                  <TableCell className="text-sm font-medium capitalize">
+                    {categoryDisplayName(r.leak_category)}
+                  </TableCell>
+                  <TableCell className="num text-right text-xs">{r.sample_size}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={CONFIDENCE_TONE[r.confidence]}>
+                      {r.confidence}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="num text-right text-xs text-muted-foreground">
+                    {r.reference_coverage != null ? `${Math.round(r.reference_coverage * 100)}%` : "—"}
+                  </TableCell>
+                  <TableCell className="num text-right text-xs text-loss">
+                    {r.mean_ev_gap != null ? `+${r.mean_ev_gap.toFixed(2)} BB` : "—"}
+                  </TableCell>
+                  <TableCell className="num text-right text-xs text-muted-foreground">
+                    {r.median_ev_gap != null ? `+${r.median_ev_gap.toFixed(2)} BB` : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </Panel>
+
+      {selected && (
+        <Panel
+          title={`Onde "${categoryDisplayName(selected)}" mais aparece`}
+          subtitle={`${breakdownQ.data?.length ?? 0} grupos · sempre com amostra ao lado`}
+          actions={
+            <Select value={dimension} onValueChange={(v) => setDimension(v as "position" | "stack")}>
+              <SelectTrigger className="h-8 w-36 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="position">Por posição</SelectItem>
+                <SelectItem value="stack">Por faixa de stack</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        >
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>{dimension === "position" ? "Posição" : "Stack"}</TableHead>
+                  <TableHead className="text-right">Amostra</TableHead>
+                  <TableHead>Confiança</TableHead>
+                  <TableHead className="text-right">EV gap médio</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {breakdownQ.isLoading && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
+                      Carregando…
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!breakdownQ.isLoading && (breakdownQ.data ?? []).length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
+                      Sem dados nessa dimensão.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {(breakdownQ.data ?? []).map((r: LeakDetectorBreakdownRow) => (
+                  <TableRow key={`${r.leak_category}-${r.dimension_value}`}>
+                    <TableCell className="text-sm font-medium">{r.dimension_value ?? "—"}</TableCell>
+                    <TableCell className="num text-right text-xs">{r.sample_size}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={CONFIDENCE_TONE[r.confidence]}>
+                        {r.confidence}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="num text-right text-xs text-loss">
+                      {r.mean_ev_gap != null ? `+${r.mean_ev_gap.toFixed(2)} BB` : "—"}
                     </TableCell>
                   </TableRow>
                 ))}

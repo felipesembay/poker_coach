@@ -98,14 +98,27 @@ class Hand:
         else:
             names = ["BTN", "SB", "BB"]
             rest = n - 3
-            mids = []
-            labels = ["UTG", "UTG+1", "UTG+2", "MP", "MP+1", "HJ", "CO"]
-            if rest > 0:
-                mids = labels[:rest]
+            # Convenção padrão de mesa (verificada contra rest=1..6): as
+            # duas posições mais tardias (HJ, CO) aparecem primeiro conforme
+            # a mesa cresce a partir de 4-handed, e só depois é que UTG
+            # aparece (6-handed) e novas posições cedo (UTG+1, MP, ...) vão
+            # sendo adicionadas. A versão antiga fazia o oposto (cortava um
+            # array já cheio de UTG.../MP... pelo início e só remendava as
+            # 1-2 últimas posições), o que dava "UTG" pra mesas de 4/5
+            # jogadores onde essa posição não existe de verdade (deveria
+            # ser CO/HJ) — inflava contagem de mãos "UTG" artificialmente
+            # em qualquer mesa != 6-handed.
+            mids: list[str] = []
+            if rest >= 1:
+                early_n = max(0, rest - 2)
+                utg_n = (early_n + 1) // 2
+                mp_n = early_n - utg_n
+                early = [f"UTG+{i}" if i else "UTG" for i in range(utg_n)]
+                early += [f"MP+{i}" if i else "MP" for i in range(mp_n)]
+                mids = early
                 if rest >= 2:
-                    mids[-1] = "CO"
-                if rest >= 3:
-                    mids[-2] = "HJ"
+                    mids.append("HJ")
+                mids.append("CO")
             names += mids
         return [(names[i], by_seat_no[seat_no]) for i, seat_no in enumerate(order)]
 

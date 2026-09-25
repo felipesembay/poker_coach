@@ -112,6 +112,50 @@ export const leaksApi = {
   }) => request<LeakHand[]>(`/api/pushfold/leaks/hands${qs(params)}`),
 };
 
+// ---------------- Leak Detector (Fase 3 do plano de RL — Padrões de comportamento) ----------------
+// Distinto do Leak Finder acima: lê o snapshot do dataset exportado
+// (`export-rl`), preflop E pós-flop, agrupado por categoria de
+// comportamento — ver poker_coach/api/routers/leak_detector.py.
+
+export type LeakConfidence = "alta" | "média" | "baixa";
+
+export type LeakDetectorCategoryRow = {
+  leak_category: string;
+  sample_size: number;
+  reference_coverage: number | null;
+  mean_ev_gap: number | null;
+  median_ev_gap: number | null;
+  std_ev_gap: number | null;
+  confidence: LeakConfidence;
+};
+
+export type LeakDetectorReport = {
+  n_decisions: number;
+  n_leaks: number;
+  n_reference_available: number;
+  sizing_note: string;
+  by_category: LeakDetectorCategoryRow[];
+};
+
+export type LeakDetectorBreakdownRow = {
+  leak_category: string;
+  dimension_value: string | null;
+  sample_size: number;
+  reference_coverage: number | null;
+  mean_ev_gap: number | null;
+  median_ev_gap: number | null;
+  std_ev_gap: number | null;
+  confidence: LeakConfidence;
+};
+
+export const leakDetectorApi = {
+  report: () => request<LeakDetectorReport>("/api/leak-detector/report"),
+  breakdown: (category: string, dimension: "position" | "stack" = "position") =>
+    request<LeakDetectorBreakdownRow[]>(
+      `/api/leak-detector/breakdown${qs({ category, dimension })}`,
+    ),
+};
+
 // ---------------- Treinador ----------------
 
 export type TrainerSeat = { position: string; is_hero: boolean; stack: number };
@@ -445,10 +489,20 @@ export type ContextualEV = {
   assumptions: string[];
 };
 
+export type PolicySuggestion = {
+  // Personal Policy (Fase 2 do plano de RL, Behavioral Cloning) — "o que
+  // você costuma fazer" nesse spot, não recomendação de EV (isso é
+  // `nash`/`contextual` acima). `null` em `policy` quando o artefato
+  // treinado não existe.
+  recommended_action: string;
+  probs: Record<string, number>;
+};
+
 export type DecisionAnalysis = {
   context: DecisionContext;
   nash: NashDecision | null;
   contextual: ContextualEV | null;
+  policy: PolicySuggestion | null;
 };
 
 export const replayerApi = {

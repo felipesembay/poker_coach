@@ -10,6 +10,11 @@ export type TableSeat = {
   cards?: string[] | null;
   actionText?: string | null;
   actionTone?: "fold" | "allin" | "normal";
+  /** Fichas AINDA na frente do assento (não varridas pro pot) — só a
+   * aposta da rua atual, não a última ação da mão inteira (que é
+   * `actionText`, sempre visível). `null`/ausente = sem ficha na mesa
+   * (fold, check, ou ação de rua anterior já recolhida). */
+  betAmount?: number | null;
 };
 
 /** Distribui N assentos ao redor da mesa, hero embaixo (90°). */
@@ -86,6 +91,39 @@ export function PokerTable({
           </>
         )}
       </div>
+
+      {seats.map((s, i) => {
+        const rad = (angles[i]! * Math.PI) / 180;
+        // Pilha de fichas fica NO MEIO do caminho entre o assento (raio
+        // 35/33, ver abaixo) e o pot (centro) — mesmo ângulo do assento,
+        // raio menor.
+        if (!s.betAmount) return null;
+        const chipLabel = bb
+          ? `${(s.betAmount / bb).toFixed(1)} BB`
+          : s.betAmount.toLocaleString("pt-BR");
+        return (
+          <div
+            key={`${s.key}-chip`}
+            className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5"
+            style={{
+              left: `${50 + 17 * Math.cos(rad)}%`,
+              top: `${50 + 16 * Math.sin(rad)}%`,
+            }}
+          >
+            <div
+              className={cn(
+                "relative h-5 w-5 rounded-full border-2 shadow-[0_1px_3px_rgba(0,0,0,0.5)]",
+                s.actionTone === "allin"
+                  ? "border-loss bg-loss/25"
+                  : "border-primary/70 bg-primary/20",
+              )}
+            >
+              <div className="absolute inset-[3px] rounded-full border border-dashed border-current opacity-60" />
+            </div>
+            <span className="num text-[9px] font-semibold text-foreground/90">{chipLabel}</span>
+          </div>
+        );
+      })}
 
       {seats.map((s, i) => {
         const rad = (angles[i]! * Math.PI) / 180;

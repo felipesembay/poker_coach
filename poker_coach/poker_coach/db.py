@@ -209,6 +209,15 @@ CREATE TABLE IF NOT EXISTS adaptive_trainer_log (
     ev_gap_bb REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS decision_cache (
+    site TEXT NOT NULL,
+    hand_id TEXT NOT NULL,
+    step_order INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (site, hand_id, step_order)
+);
+
 CREATE TABLE IF NOT EXISTS decision_analysis (
     site TEXT NOT NULL,
     hand_id TEXT NOT NULL,
@@ -342,6 +351,102 @@ def insert_hand(conn: PGConnection, h: Hand) -> bool:
     return True
 
 
+def insert_hands_batch(conn: PGConnection, hands: list[Hand]) -> int:
+    """Mesma semântica de `insert_hand` (idempotente, `ON CONFLICT DO
+    NOTHING`), mas em lote pro arquivo inteiro — 1 `executemany` por
+    tabela pra todas as mãos, em vez de até 6 round-trips ao banco POR
+    MÃO num loop Python (era o gargalo confirmado do import de hand
+    history). Assume que todas as mãos são do MESMO `site` — verdade
+    pro caso de uso real (um arquivo de hand history é sempre de uma
+    sala só, `detect_site` roda uma vez por arquivo em `imports.py`).
+    Retorna quantas mãos eram novas."""
+    if not hands:
+        return 0
+
+    site = hands[0].site
+    hand_ids = [h.hand_id for h in hands]
+    existing = {
+        row[0] for row in conn.execute(
+            "SELECT hand_id FROM hands WHERE site=? AND hand_id = ANY(?)",
+            (site, hand_ids),
+        )
+    }
+    new_hands = [h for h in hands if h.hand_id not in existing]
+    if not new_hands:
+        return 0
+
+    conn.executemany(
+        """INSERT INTO hands
+               (site, hand_id, tournament_id, ts, level, sb, bb, ante,
+                table_name, max_players, n_players, button_seat, hero,
+                hero_cards, hero_position, hero_stack_chips, hero_stack_bb,
+                hero_vpip, hero_pfr, hero_net_chips, board, favorite)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+           ON CONFLICT (site, hand_id) DO NOTHING""",
+        [
+            (h.site, h.hand_id, h.tournament_id, h.timestamp, h.level,
+             h.sb, h.bb, h.ante, h.table_name, h.max_players, h.n_players(),
+             h.button_seat, h.hero, h.hero_cards, h.hero_position(),
+             (h.hero_seat().stack if h.hero_seat() else None), h.hero_stack_bb(),
+             int(h.hero_vpip()), int(h.hero_pfr()), h.hero_net_chips(), h.board)
+            for h in new_hands
+        ],
+    )
+
+    actions = [
+        (h.site, h.hand_id, a.order, a.street, a.player, a.action, a.amount, int(a.all_in))
+        for h in new_hands for a in h.actions
+    ]
+    if actions:
+        conn.executemany(
+            "INSERT INTO actions VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT (site, hand_id, ord) DO NOTHING", actions,
+        )
+
+    seats = [
+        (h.site, h.hand_id, s.seat_no, s.player, s.stack)
+        for h in new_hands for s in h.seats
+    ]
+    if seats:
+        conn.executemany(
+            "INSERT INTO seats VALUES (?,?,?,?,?) "
+            "ON CONFLICT (site, hand_id, seat_no) DO NOTHING", seats,
+        )
+
+    showdowns = [
+        (h.site, h.hand_id, player, cards)
+        for h in new_hands for player, cards in h.shown_cards.items()
+    ]
+    if showdowns:
+        conn.executemany(
+            "INSERT INTO showdowns VALUES (?,?,?,?) "
+            "ON CONFLICT (site, hand_id, player) DO NOTHING", showdowns,
+        )
+
+    results = [
+        (h.site, h.hand_id, player, net)
+        for h in new_hands for player, net in h.results.items()
+    ]
+    if results:
+        conn.executemany(
+            "INSERT INTO results VALUES (?,?,?,?) "
+            "ON CONFLICT (site, hand_id, player) DO NOTHING", results,
+        )
+
+    conn.executemany(
+        """INSERT INTO tournaments (site, tournament_id, buyin, currency, first_seen, last_seen)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(site, tournament_id) DO UPDATE SET
+             buyin = COALESCE(excluded.buyin, tournaments.buyin),
+             currency = COALESCE(excluded.currency, tournaments.currency),
+             first_seen = LEAST(COALESCE(tournaments.first_seen, excluded.first_seen), excluded.first_seen),
+             last_seen = GREATEST(COALESCE(tournaments.last_seen, excluded.last_seen), excluded.last_seen)""",
+        [(h.site, h.tournament_id, h.buyin, h.currency, h.timestamp, h.timestamp) for h in new_hands],
+    )
+
+    return len(new_hands)
+
+
 def set_result(conn, site: str, tournament_id: str, position: int | None, prize: float | None,
                 prize_type: str | None = None, prize_note: str | None = None,
                 name: str | None = None, buyin: float | None = None,
@@ -444,6 +549,35 @@ def quiz_stats(conn: PGConnection) -> dict:
         "total": total or 0, "correct": correct or 0,
         "pct": round((correct or 0) / total * 100, 1) if total else None,
     }
+
+
+# ---------------- Cache de Decision Analysis (Replayer) ----------------
+#
+# `decision_analysis` é write-only por propósito (alimenta agregações de
+# decision_stats.py com colunas numéricas típadas) — não é lida de volta
+# antes de recalcular. Essa tabela aqui É o cache de verdade: guarda a
+# resposta JSON completa já montada (`DecisionAnalysisOut`), pra não
+# pagar de novo o Monte Carlo ao vivo (10-16s, medido nesta sessão) toda
+# vez que a mesma mão/step é revisitada no Replayer.
+
+def get_cached_decision(conn: PGConnection, site: str, hand_id: str, step_order: int) -> str | None:
+    row = conn.execute(
+        "SELECT response_json FROM decision_cache WHERE site=? AND hand_id=? AND step_order=?",
+        (site, hand_id, step_order),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def save_cached_decision(conn: PGConnection, site: str, hand_id: str, step_order: int,
+                          response_json: str) -> None:
+    import datetime as _dt
+    conn.execute(
+        """INSERT INTO decision_cache (site, hand_id, step_order, response_json, created_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT (site, hand_id, step_order) DO UPDATE SET
+             response_json=excluded.response_json, created_at=excluded.created_at""",
+        (site, hand_id, step_order, response_json, _dt.datetime.now().isoformat(timespec="seconds")),
+    )
 
 
 # ---------------- Adaptive Trainer (seção 19 do plano de RL) ----------------

@@ -49,7 +49,7 @@ async def import_hand_histories(files: list[UploadFile] = File(...)):
                 continue
             parser = pokerstars if site == "pokerstars" else partypoker
             hands = parser.parse_file(text)
-            new = sum(dbm.insert_hand(conn, h) for h in hands)
+            new = dbm.insert_hands_batch(conn, hands)
             conn.commit()
             total_new += new
             results.append(FileResult(
