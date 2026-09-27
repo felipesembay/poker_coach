@@ -42,6 +42,10 @@ class TournamentOut(BaseModel):
     prize_type: str | None = None
     prize_note: str | None = None       # anotação livre (ex.: "classifiquei via satélite")
     has_payouts: bool = False  # estrutura completa de premiação (todas as colocações) configurada
+    rebuys: int = 0                     # re-buys do hero (cada um custa o buy-in)
+    entry_type: Literal["cash", "ticket"] = "cash"  # como a entrada foi paga
+    entry_ticket_site: str | None = None            # torneio onde o ticket de entrada foi ganho
+    entry_ticket_tournament_id: str | None = None
 
 
 @router.get("/tournaments", response_model=list[TournamentOut])
@@ -55,7 +59,9 @@ def list_tournaments():
                         WHERE h.site = t.site AND h.tournament_id = t.tournament_id) AS n_hands,
                       t.finish_position, t.prize, t.prize_type, t.prize_note,
                       EXISTS(SELECT 1 FROM payouts p WHERE p.site=t.site
-                             AND p.tournament_id=t.tournament_id) AS has_payouts
+                             AND p.tournament_id=t.tournament_id) AS has_payouts,
+                      COALESCE(t.rebuys, 0), COALESCE(t.entry_type, 'cash'),
+                      t.entry_ticket_site, t.entry_ticket_tournament_id
                FROM tournaments t
                WHERE t.tournament_id IN (SELECT DISTINCT tournament_id FROM hands)
                ORDER BY t.first_seen DESC"""
@@ -65,8 +71,9 @@ def list_tournaments():
                 site=s, tournament_id=tid, name=n, buyin=b, currency=cur,
                 first_seen=fs, last_seen=ls, n_hands=nh,
                 finish_position=fp, prize=pz, prize_type=pt, prize_note=pnote, has_payouts=hp,
+                rebuys=rb, entry_type=et, entry_ticket_site=ets, entry_ticket_tournament_id=etid,
             )
-            for s, tid, n, b, cur, fs, ls, nh, fp, pz, pt, pnote, hp in rows
+            for s, tid, n, b, cur, fs, ls, nh, fp, pz, pt, pnote, hp, rb, et, ets, etid in rows
         ]
     finally:
         conn.close()
@@ -135,6 +142,56 @@ def set_tournament_result(site: str, tournament_id: str, payload: TournamentResu
                         prize_type=payload.prize_type, prize_note=payload.prize_note)
         conn.commit()
         return {"ok": True}
+    finally:
+        conn.close()
+
+
+class TournamentEntryIn(BaseModel):
+    rebuys: int = 0
+    entry_type: Literal["cash", "ticket"] = "cash"
+    # torneio onde o ticket foi ganho (opcional; só com entry_type="ticket")
+    ticket_site: str | None = None
+    ticket_tournament_id: str | None = None
+
+
+@router.put("/tournaments/{site}/{tournament_id}/entry")
+def set_tournament_entry(site: str, tournament_id: str, payload: TournamentEntryIn):
+    """Re-buys e forma de entrada (dinheiro/ticket) — entram no bankroll em
+    caixa (poker_coach.stats.CASH_COST). A hand history não trás nenhum
+    dos dois de forma confiável."""
+    conn = _conn()
+    try:
+        try:
+            dbm.set_tournament_entry(
+                conn, site, tournament_id, rebuys=payload.rebuys, entry_type=payload.entry_type,
+                ticket_site=payload.ticket_site, ticket_tournament_id=payload.ticket_tournament_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+class TicketSourceOut(BaseModel):
+    site: str
+    tournament_id: str
+    name: str | None
+    value: float
+    won_at: str | None
+    used_by_site: str | None
+    used_by_tournament_id: str | None
+
+
+@router.get("/ticket-sources", response_model=list[TicketSourceOut])
+def ticket_sources():
+    """Tickets ganhos (prêmio tipo ticket), com o torneio onde cada um foi
+    usado — opções do vínculo "entrada via ticket" na tela de Torneios."""
+    conn = _conn()
+    try:
+        return dbm.ticket_sources(conn)
     finally:
         conn.close()
 

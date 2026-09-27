@@ -122,23 +122,32 @@ function RootShell({ children }: { children: ReactNode }) {
 }
 
 function BankrollBadge() {
-  // Lucro real (torneios com resultado registrado) — não é "bankroll"
-  // de verdade (não temos saldo de conta), é o mesmo número de
-  // Lucro/ROI do Dashboard, só resumido pro header.
-  const { data } = useQuery({ queryKey: ["stats-overview"], queryFn: statsApi.overview });
-  const roi = data?.roi ?? null;
+  // Bankroll em caixa: fluxo de dinheiro real (todo buy-in/re-buy pago,
+  // só prêmios em dinheiro, tickets fora) — ver poker_coach/bankroll.py
+  // cash_summary. Não inclui depósitos/saques, então é o resultado da
+  // conta, não o saldo.
+  const { data } = useQuery({ queryKey: ["stats-cash-summary"], queryFn: statsApi.cashSummary });
+  const v = data?.cash_profit ?? null;
   return (
-    <div className="num flex shrink-0 items-center gap-2 text-xs">
-      <span className="hidden text-muted-foreground sm:inline">Lucro</span>
+    <div
+      className="num flex shrink-0 items-center gap-2 text-xs"
+      title={
+        data
+          ? `Prêmios em dinheiro $${data.cash_in.toFixed(2)} − buy-ins/re-buys $${data.cash_out.toFixed(2)}. ` +
+            `${data.pending_results} torneios sem resultado contam prêmio 0. Sem depósitos/saques.`
+          : undefined
+      }
+    >
+      <span className="hidden text-muted-foreground sm:inline">Caixa</span>
       <span
         className={cn(
           "rounded-md border border-border bg-card px-2 py-1 font-semibold",
-          roi == null && "text-muted-foreground",
-          roi != null && roi.profit >= 0 && "text-profit",
-          roi != null && roi.profit < 0 && "text-loss",
+          v == null && "text-muted-foreground",
+          v != null && v >= 0 && "text-profit",
+          v != null && v < 0 && "text-loss",
         )}
       >
-        {roi != null ? `${roi.profit >= 0 ? "+" : "-"}$${Math.abs(roi.profit).toFixed(2)}` : "—"}
+        {v != null ? `${v >= 0 ? "+" : "-"}$${Math.abs(v).toFixed(2)}` : "—"}
       </span>
     </div>
   );

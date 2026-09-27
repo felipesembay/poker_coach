@@ -15,6 +15,7 @@ import {
   Spade,
   Trophy,
   AlertTriangle,
+  Fingerprint,
 } from "lucide-react";
 
 import {
@@ -40,6 +41,7 @@ const groups = [
       { title: "Torneios", url: "/torneios", icon: Trophy },
       { title: "Replayer", url: "/replayer", icon: PlayCircle },
       { title: "Estatísticas", url: "/estatisticas", icon: LineChart },
+      { title: "Estilo de Jogo", url: "/estilo", icon: Fingerprint },
     ],
   },
   {

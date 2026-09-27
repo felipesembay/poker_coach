@@ -15,6 +15,27 @@ saldo em BB (fichas), que é 100% derivado das mãos importadas.
 import datetime as dt
 import sqlite3
 
+# ---------------- Expressões financeiras compartilhadas ----------------
+# Fonte única das regras de dinheiro por torneio (usadas aqui e em
+# bankroll.py). Duas visões diferentes, de propósito:
+#
+# - RESULTADO (ROI/ITM/lucro por torneio): custo total = buy-in × (1 +
+#   re-buys), prêmio pelo valor de face (ticket conta pelo valor). É a
+#   métrica de desempenho padrão — só torneios com resultado lançado.
+# - CAIXA (bankroll real): o que efetivamente entrou/saiu da conta. Entrada
+#   paga com ticket não sai do caixa; prêmio em ticket não entra no caixa
+#   (vira ticket, que só vira dinheiro se um torneio jogado com ele pagar
+#   em cash). Conta TODOS os torneios: buy-in de torneio sem resultado
+#   lançado já foi pago, só o prêmio fica 0 até ser registrado.
+#
+# "Resultado registrado" = colocação OU prêmio preenchido (antes era só
+# colocação — prêmio lançado sem colocação ficava de fora do ROI).
+HAS_RESULT = "(finish_position IS NOT NULL OR prize IS NOT NULL)"
+TOTAL_COST = "(COALESCE(buyin, 0) * (1 + COALESCE(rebuys, 0)))"
+CASH_COST = ("((CASE WHEN entry_type = 'ticket' THEN 0 ELSE COALESCE(buyin, 0) END)"
+             " + COALESCE(buyin, 0) * COALESCE(rebuys, 0))")
+CASH_PRIZE = "(CASE WHEN prize_type = 'ticket' THEN 0 ELSE COALESCE(prize, 0) END)"
+
 
 def overview(conn: sqlite3.Connection) -> dict:
     hands, = conn.execute("SELECT COUNT(*) FROM hands").fetchone()
@@ -40,10 +61,10 @@ def overview(conn: sqlite3.Connection) -> dict:
 def roi(conn: sqlite3.Connection) -> dict | None:
     """ROI/ITM com base nos resultados registrados (cmd 'result')."""
     row = conn.execute(
-        """SELECT COUNT(*), SUM(buyin), SUM(COALESCE(prize, 0)),
-                  SUM(CASE WHEN prize > 0 THEN 1 ELSE 0 END),
-                  AVG(buyin)
-           FROM tournaments WHERE finish_position IS NOT NULL"""
+        f"""SELECT COUNT(*), SUM({TOTAL_COST}), SUM(COALESCE(prize, 0)),
+                   SUM(CASE WHEN prize > 0 THEN 1 ELSE 0 END),
+                   AVG(buyin)
+            FROM tournaments WHERE {HAS_RESULT}"""
     ).fetchone()
     n, invested, won, itm, abi = row
     if not n or not invested:
@@ -204,9 +225,9 @@ def satellite_conversion_rate(conn: sqlite3.Connection) -> dict:
 
 def cash_vs_ticket_summary(conn: sqlite3.Connection) -> dict:
     row = conn.execute(
-        """SELECT prize_type, COUNT(*), SUM(COALESCE(prize, 0))
-           FROM tournaments WHERE finish_position IS NOT NULL AND prize > 0
-           GROUP BY prize_type"""
+        f"""SELECT prize_type, COUNT(*), SUM(COALESCE(prize, 0))
+            FROM tournaments WHERE {HAS_RESULT} AND prize > 0
+            GROUP BY prize_type"""
     ).fetchall()
     out = {"cash": {"count": 0, "total": 0.0}, "ticket": {"count": 0, "total": 0.0}}
     for ptype, n, total in row:
@@ -223,7 +244,7 @@ def results_pending(conn: sqlite3.Connection) -> list[tuple]:
                   COUNT(h.hand_id) AS hands, MIN(h.ts) AS first_seen
            FROM tournaments t
            LEFT JOIN hands h ON h.site = t.site AND h.tournament_id = t.tournament_id
-           WHERE t.finish_position IS NULL
+           WHERE t.finish_position IS NULL AND t.prize IS NULL
            GROUP BY t.site, t.tournament_id
            ORDER BY first_seen DESC"""
     ).fetchall()
@@ -326,10 +347,10 @@ def profit_by_period(conn: sqlite3.Connection, period: str = "day") -> list[dict
     fmt = {"day": "YYYY-MM-DD", "week": 'IYYY-"W"IW', "month": "YYYY-MM"}[period]
     rows = conn.execute(
         f"""SELECT to_char(first_seen::timestamp, '{fmt}') AS bucket,
-                   SUM(COALESCE(prize, 0) - buyin) AS profit,
+                   SUM(COALESCE(prize, 0) - {TOTAL_COST}) AS profit,
                    COUNT(*) AS tournaments
             FROM tournaments
-            WHERE finish_position IS NOT NULL AND first_seen IS NOT NULL
+            WHERE {HAS_RESULT} AND first_seen IS NOT NULL
             GROUP BY bucket ORDER BY bucket"""
     ).fetchall()
     return [{"period": b, "profit": round(p or 0, 2), "tournaments": n} for b, p, n in rows]
@@ -385,13 +406,13 @@ def sessions_by_day(conn: sqlite3.Connection) -> list[dict]:
     qualquer hand importada; lucro/ROI/ABI só contam torneios com
     resultado registrado (senão não dá pra saber o prêmio)."""
     t_rows = conn.execute(
-        """SELECT to_char(first_seen::timestamp, 'YYYY-MM-DD') AS day, site,
-                  COUNT(*) AS tournaments, SUM(buyin) AS invested_all,
-                  SUM(CASE WHEN finish_position IS NOT NULL THEN buyin ELSE 0 END) AS invested,
-                  SUM(CASE WHEN finish_position IS NOT NULL THEN COALESCE(prize, 0) ELSE 0 END) AS won,
-                  SUM(CASE WHEN finish_position IS NOT NULL THEN 1 ELSE 0 END) AS with_result
-           FROM tournaments WHERE first_seen IS NOT NULL
-           GROUP BY day, site"""
+        f"""SELECT to_char(first_seen::timestamp, 'YYYY-MM-DD') AS day, site,
+                   COUNT(*) AS tournaments, SUM(buyin) AS invested_all,
+                   SUM(CASE WHEN {HAS_RESULT} THEN {TOTAL_COST} ELSE 0 END) AS invested,
+                   SUM(CASE WHEN {HAS_RESULT} THEN COALESCE(prize, 0) ELSE 0 END) AS won,
+                   SUM(CASE WHEN {HAS_RESULT} THEN 1 ELSE 0 END) AS with_result
+            FROM tournaments WHERE first_seen IS NOT NULL
+            GROUP BY day, site"""
     ).fetchall()
 
     h_rows = conn.execute(
@@ -493,11 +514,11 @@ def pushfold_training_day_detail(conn: sqlite3.Connection, date: str) -> dict:
             stack_buckets.append({"bucket": f"{lo:g}-{hi:g}BB", "hands": n})
 
     session_rows = conn.execute(
-        """SELECT t.site, COUNT(*) AS tournaments,
-                  SUM(CASE WHEN t.finish_position IS NOT NULL THEN t.buyin ELSE 0 END) AS invested,
-                  SUM(CASE WHEN t.finish_position IS NOT NULL THEN COALESCE(t.prize, 0) ELSE 0 END) AS won,
-                  SUM(CASE WHEN t.finish_position IS NOT NULL THEN 1 ELSE 0 END) AS with_result
-           FROM tournaments t
+        f"""SELECT t.site, COUNT(*) AS tournaments,
+                   SUM(CASE WHEN {HAS_RESULT} THEN {TOTAL_COST} ELSE 0 END) AS invested,
+                   SUM(CASE WHEN {HAS_RESULT} THEN COALESCE(t.prize, 0) ELSE 0 END) AS won,
+                   SUM(CASE WHEN {HAS_RESULT} THEN 1 ELSE 0 END) AS with_result
+            FROM tournaments t
            WHERE to_char(t.first_seen::timestamp, 'YYYY-MM-DD') = ?
            GROUP BY t.site""",
         (date,),
@@ -512,10 +533,10 @@ def pushfold_training_day_detail(conn: sqlite3.Connection, date: str) -> dict:
 
 def profit_by_buyin(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        """SELECT buyin, COUNT(*), SUM(buyin), SUM(COALESCE(prize, 0)),
-                  SUM(CASE WHEN prize > 0 THEN 1 ELSE 0 END)
-           FROM tournaments WHERE finish_position IS NOT NULL
-           GROUP BY buyin ORDER BY buyin"""
+        f"""SELECT buyin, COUNT(*), SUM({TOTAL_COST}), SUM(COALESCE(prize, 0)),
+                   SUM(CASE WHEN prize > 0 THEN 1 ELSE 0 END)
+            FROM tournaments WHERE {HAS_RESULT}
+            GROUP BY buyin ORDER BY buyin"""
     ).fetchall()
     out = []
     for buyin, n, invested, won, itm in rows:

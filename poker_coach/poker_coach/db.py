@@ -93,6 +93,10 @@ CREATE TABLE IF NOT EXISTS tournaments (
     prize_type TEXT,
     prize_note TEXT,
     name TEXT,
+    rebuys INTEGER DEFAULT 0,
+    entry_type TEXT,                  -- 'cash' | 'ticket' (NULL = cash)
+    entry_ticket_site TEXT,           -- torneio onde o ticket de entrada foi ganho
+    entry_ticket_tournament_id TEXT,
     PRIMARY KEY (site, tournament_id)
 );
 
@@ -271,6 +275,14 @@ def _migrate(conn: PGConnection) -> None:
         conn.execute("ALTER TABLE tournaments ADD COLUMN prize_note TEXT")
     if "name" not in t_cols:
         conn.execute("ALTER TABLE tournaments ADD COLUMN name TEXT")
+    if "rebuys" not in t_cols:
+        conn.execute("ALTER TABLE tournaments ADD COLUMN rebuys INTEGER DEFAULT 0")
+    if "entry_type" not in t_cols:
+        conn.execute("ALTER TABLE tournaments ADD COLUMN entry_type TEXT")
+    if "entry_ticket_site" not in t_cols:
+        conn.execute("ALTER TABLE tournaments ADD COLUMN entry_ticket_site TEXT")
+    if "entry_ticket_tournament_id" not in t_cols:
+        conn.execute("ALTER TABLE tournaments ADD COLUMN entry_ticket_tournament_id TEXT")
 
     h_cols = _cols("hands")
     if "favorite" not in h_cols:
@@ -482,6 +494,70 @@ def set_result(conn, site: str, tournament_id: str, position: int | None, prize:
         (site, tournament_id, buyin, currency, date_iso, date_iso,
          position, prize, prize_type, prize_note, name),
     )
+
+
+# ---------------- Entrada do torneio: re-buys e tickets ----------------
+#
+# Nada disso vem da hand history (ela não diz se você pagou a entrada com
+# ticket, nem registra re-buy de forma confiável) — é sempre lançado à mão
+# na tela de Torneios. Alimenta o bankroll em caixa (stats.CASH_COST).
+
+def set_tournament_entry(conn: PGConnection, site: str, tournament_id: str, *,
+                         rebuys: int, entry_type: str,
+                         ticket_site: str | None = None,
+                         ticket_tournament_id: str | None = None) -> None:
+    """Re-buys (quantidade, cada um custa o buy-in) + forma de entrada.
+    `entry_type='ticket'` = entrada paga com ticket (não sai do caixa);
+    opcionalmente vinculada ao torneio onde o ticket foi ganho. Um ticket
+    só pode ser usado uma vez. Levanta ValueError em entrada inválida e
+    LookupError se o torneio não existe."""
+    if rebuys < 0:
+        raise ValueError("rebuys não pode ser negativo")
+    if entry_type not in ("cash", "ticket"):
+        raise ValueError(f"entry_type inválido: {entry_type!r}")
+    if (ticket_site is None) != (ticket_tournament_id is None):
+        raise ValueError("vínculo de ticket exige site e tournament_id juntos")
+    if ticket_tournament_id is not None:
+        if entry_type != "ticket":
+            raise ValueError("vínculo de ticket só vale para entrada via ticket")
+        if (ticket_site, ticket_tournament_id) == (site, tournament_id):
+            raise ValueError("um torneio não pode usar o próprio ticket")
+        src = conn.execute(
+            "SELECT prize_type, prize FROM tournaments WHERE site=? AND tournament_id=?",
+            (ticket_site, ticket_tournament_id)).fetchone()
+        if src is None or src[0] != "ticket" or not src[1] or src[1] <= 0:
+            raise ValueError("torneio de origem não tem prêmio do tipo ticket")
+        used = conn.execute(
+            """SELECT tournament_id FROM tournaments
+               WHERE entry_ticket_site=? AND entry_ticket_tournament_id=?
+                 AND NOT (site=? AND tournament_id=?)""",
+            (ticket_site, ticket_tournament_id, site, tournament_id)).fetchone()
+        if used is not None:
+            raise ValueError(f"esse ticket já foi usado no torneio #{used[0]}")
+    cur = conn.execute(
+        """UPDATE tournaments SET rebuys=?, entry_type=?,
+                  entry_ticket_site=?, entry_ticket_tournament_id=?
+           WHERE site=? AND tournament_id=?""",
+        (rebuys, entry_type, ticket_site, ticket_tournament_id, site, tournament_id))
+    if cur.rowcount == 0:
+        raise LookupError(f"torneio {site}/{tournament_id} não encontrado")
+
+
+def ticket_sources(conn: PGConnection) -> list[dict]:
+    """Tickets ganhos (prêmio tipo ticket > 0), com o torneio em que cada
+    um foi usado (None = ainda não vinculado a nenhuma entrada)."""
+    rows = conn.execute(
+        """SELECT t.site, t.tournament_id, t.name, t.prize, t.first_seen,
+                  u.site, u.tournament_id
+           FROM tournaments t
+           LEFT JOIN tournaments u
+             ON u.entry_ticket_site = t.site AND u.entry_ticket_tournament_id = t.tournament_id
+           WHERE t.prize_type = 'ticket' AND t.prize > 0
+           ORDER BY t.first_seen DESC NULLS LAST"""
+    ).fetchall()
+    return [{"site": s, "tournament_id": tid, "name": n, "value": v, "won_at": ts,
+             "used_by_site": us, "used_by_tournament_id": ut}
+            for s, tid, n, v, ts, us, ut in rows]
 
 
 # ---------------- Replayer: favoritos, notas, tags ----------------

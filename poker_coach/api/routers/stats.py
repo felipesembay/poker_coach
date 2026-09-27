@@ -247,7 +247,9 @@ def sessions():
 # nunca mistura moeda automaticamente — sem filtro de moeda explícito,
 # soma tudo (o frontend deve checar /currencies antes de decidir).
 
-BankrollUnit = Literal["bb", "money", "buyins"]
+# cash = fluxo de caixa real (todos os torneios, re-buys, tickets fora) —
+# ver bankroll.py/stats.CASH_COST.
+BankrollUnit = Literal["bb", "money", "buyins", "cash"]
 
 
 class CurrencyOut(BaseModel):
@@ -309,6 +311,36 @@ def session_average(unit: BankrollUnit = Query("bb"), currency: str | None = Que
     conn = _conn()
     try:
         return bankroll.session_average(conn, unit=unit, currency=currency)
+    finally:
+        conn.close()
+
+
+class CashSummaryOut(BaseModel):
+    cash_profit: float
+    cash_in: float
+    cash_out: float
+    buyins_cash: float
+    rebuys: int
+    rebuys_cost: float
+    tournaments: int
+    pending_results: int
+    pending_buyins: float
+    ticket_entries: int
+    ticket_entries_value: float
+    ticket_entries_linked: int
+    tickets_won: int
+    tickets_won_value: float
+    tickets_unlinked: int
+    tickets_unlinked_value: float
+
+
+@router.get("/cash-summary", response_model=CashSummaryOut)
+def cash_summary():
+    """Bankroll em caixa decomposto (entradas, saídas, re-buys, tickets,
+    torneios sem resultado) — ver bankroll.cash_summary."""
+    conn = _conn()
+    try:
+        return bankroll.cash_summary(conn)
     finally:
         conn.close()
 

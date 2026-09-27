@@ -81,14 +81,27 @@ function fmtDateShort(iso: string): string {
   return `${d}/${m}/${(y ?? "").slice(2)}`;
 }
 
-const UNIT_LABEL: Record<BankrollUnit, string> = { bb: "BB", money: "$", buyins: "buy-ins" };
+const UNIT_LABEL: Record<BankrollUnit, string> = {
+  bb: "BB",
+  money: "$",
+  buyins: "buy-ins",
+  cash: "$",
+};
+
+const UNIT_SUBTITLE: Record<BankrollUnit, string> = {
+  bb: "Sempre disponível — não depende de resultado registrado",
+  buyins: "Só torneios com resultado registrado · re-buys incluídos no custo",
+  money: "Resultado: só torneios com resultado registrado · ticket pelo valor de face",
+  cash: "Caixa: todo buy-in e re-buy pago, só prêmios em dinheiro · tickets fora · sem depósitos/saques",
+};
 
 // `signed`: mostra "+" pra valores >=0 (resultado, média — onde o sinal
 // importa). Downswing é sempre uma magnitude de perda (>=0) — mostrar
 // "+50 BB" ali passaria a impressão errada de ganho.
 function fmtByUnit(v: number | null | undefined, unit: BankrollUnit, signed = true): string {
   if (v == null) return "—";
-  if (unit === "money") return signed ? fmtMoney(v) : `$${Math.abs(v).toFixed(2)}`;
+  if (unit === "money" || unit === "cash")
+    return signed ? fmtMoney(v) : `$${Math.abs(v).toFixed(2)}`;
   const sign = signed && v >= 0 ? "+" : "";
   const decimals = unit === "buyins" ? 2 : 1;
   return `${sign}${v.toFixed(decimals)} ${UNIT_LABEL[unit]}`;
@@ -115,7 +128,7 @@ function Dashboard() {
 
   const currenciesQ = useQuery({ queryKey: ["stats-currencies"], queryFn: statsApi.currencies });
   const effectiveCurrency =
-    unit === "money" ? (currency ?? currenciesQ.data?.[0]?.currency) : undefined;
+    unit === "money" || unit === "cash" ? (currency ?? currenciesQ.data?.[0]?.currency) : undefined;
 
   const bankrollSeriesQ = useQuery({
     queryKey: ["bankroll-series", unit, effectiveCurrency],
@@ -340,15 +353,11 @@ function Dashboard() {
       <div className="grid gap-4 xl:grid-cols-3">
         <Panel
           title="Evolução de bankroll"
-          subtitle={
-            unit === "bb"
-              ? "Sempre disponível — não depende de resultado registrado"
-              : "Só torneios com resultado registrado"
-          }
+          subtitle={UNIT_SUBTITLE[unit]}
           className="xl:col-span-2"
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              {unit === "money" && multipleCurrencies && effectiveCurrency ? (
+              {(unit === "money" || unit === "cash") && multipleCurrencies && effectiveCurrency ? (
                 <Select value={effectiveCurrency} onValueChange={setCurrency}>
                   <SelectTrigger className="h-7 w-20 text-xs">
                     <SelectValue />
@@ -388,7 +397,10 @@ function Dashboard() {
                   Buy-ins
                 </ToggleGroupItem>
                 <ToggleGroupItem value="money" className="h-7 px-2 text-xs">
-                  Dinheiro
+                  Resultado $
+                </ToggleGroupItem>
+                <ToggleGroupItem value="cash" className="h-7 px-2 text-xs">
+                  Caixa
                 </ToggleGroupItem>
               </ToggleGroup>
             </div>

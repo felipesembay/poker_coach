@@ -21,7 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { icmApi, type IcmTournament } from "@/lib/api";
+import { icmApi, statsApi, type IcmTournament, type TicketSource } from "@/lib/api";
 
 export const Route = createFileRoute("/torneios")({
   head: () => ({
@@ -48,7 +48,27 @@ function fmtDateTime(iso: string | null): string {
   return `${d}/${m}/${y}${hm ? ` ${hm}` : ""}`;
 }
 
-function TournamentRow({ t }: { t: IcmTournament }) {
+const fmtUsd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(2)}`;
+const sourceKey = (site: string, tid: string) => `${site}::${tid}`;
+
+// Tickets que esta linha pode usar: ainda não consumidos por outro torneio
+// e ganhos antes deste torneio começar. Os de valor igual ao buy-in
+// aparecem primeiro (é quase sempre o ticket certo).
+function ticketOptionsFor(t: IcmTournament, sources: TicketSource[]): TicketSource[] {
+  const mine = (s: TicketSource) =>
+    s.used_by_site === t.site && s.used_by_tournament_id === t.tournament_id;
+  return sources
+    .filter((s) => !(s.site === t.site && s.tournament_id === t.tournament_id))
+    .filter((s) => s.used_by_tournament_id == null || mine(s))
+    .filter((s) => mine(s) || !s.won_at || !t.first_seen || s.won_at <= t.first_seen)
+    .sort((a, b) => {
+      const ma = Math.abs(a.value - (t.buyin ?? -1)) < 1e-9 ? 0 : 1;
+      const mb = Math.abs(b.value - (t.buyin ?? -1)) < 1e-9 ? 0 : 1;
+      return ma - mb || (b.won_at ?? "").localeCompare(a.won_at ?? "");
+    });
+}
+
+function TournamentRow({ t, ticketSources }: { t: IcmTournament; ticketSources: TicketSource[] }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(t.name ?? "");
   const [position, setPosition] = useState(
@@ -57,6 +77,13 @@ function TournamentRow({ t }: { t: IcmTournament }) {
   const [prize, setPrize] = useState(t.prize != null ? String(t.prize) : "");
   const [prizeType, setPrizeType] = useState<"cash" | "ticket" | "">(t.prize_type ?? "");
   const [prizeNote, setPrizeNote] = useState(t.prize_note ?? "");
+  const [rebuys, setRebuys] = useState(String(t.rebuys));
+  const [entryType, setEntryType] = useState<"cash" | "ticket">(t.entry_type);
+  const savedSource =
+    t.entry_ticket_site && t.entry_ticket_tournament_id
+      ? sourceKey(t.entry_ticket_site, t.entry_ticket_tournament_id)
+      : "";
+  const [ticketSource, setTicketSource] = useState(savedSource);
 
   // Ressincroniza se a linha mudar por baixo (outro filtro, refetch) —
   // não a cada keystroke, só quando os valores salvos mudam de fato.
@@ -66,9 +93,34 @@ function TournamentRow({ t }: { t: IcmTournament }) {
     setPrize(t.prize != null ? String(t.prize) : "");
     setPrizeType(t.prize_type ?? "");
     setPrizeNote(t.prize_note ?? "");
-  }, [t.site, t.tournament_id, t.name, t.finish_position, t.prize, t.prize_type, t.prize_note]);
+    setRebuys(String(t.rebuys));
+    setEntryType(t.entry_type);
+    setTicketSource(savedSource);
+  }, [
+    t.site,
+    t.tournament_id,
+    t.name,
+    t.finish_position,
+    t.prize,
+    t.prize_type,
+    t.prize_note,
+    t.rebuys,
+    t.entry_type,
+    savedSource,
+  ]);
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["icm-tournaments"] });
+  // Resultado/entrada mudam o bankroll em caixa e a lista de tickets —
+  // recarrega tudo que depende disso, não só a tabela.
+  const invalidate = () => {
+    for (const key of [
+      "icm-tournaments",
+      "ticket-sources",
+      "stats-cash-summary",
+      "stats-overview",
+      "bankroll-series",
+    ])
+      queryClient.invalidateQueries({ queryKey: [key] });
+  };
 
   // Aviso de salvamento por linha: "Salvando…" enquanto o PUT está no ar,
   // "Salvo" por 2s depois de confirmado, "Erro" (fixo, não some sozinho)
@@ -127,6 +179,27 @@ function TournamentRow({ t }: { t: IcmTournament }) {
     onError: markError,
   });
 
+  const saveEntryMutation = useMutation({
+    mutationFn: (vars: { rebuys: string; entryType: "cash" | "ticket"; source: string }) => {
+      const [site, tid] = vars.source ? vars.source.split("::") : [];
+      return icmApi.setTournamentEntry(t.site, t.tournament_id, {
+        rebuys: vars.rebuys.trim() ? Math.max(0, Math.floor(Number(vars.rebuys))) : 0,
+        entry_type: vars.entryType,
+        ticket_site: vars.entryType === "ticket" && site ? site : null,
+        ticket_tournament_id: vars.entryType === "ticket" && tid ? tid : null,
+      });
+    },
+    onMutate: () => setStatus("saving"),
+    onSuccess: () => {
+      invalidate();
+      markSaved();
+    },
+    onError: markError,
+  });
+
+  const rebuysDirty = (rebuys.trim() || "0") !== String(t.rebuys);
+  const ticketOptions = ticketOptionsFor(t, ticketSources);
+
   const positionDirty = position !== (t.finish_position != null ? String(t.finish_position) : "");
   const prizeDirty = prize !== (t.prize != null ? String(t.prize) : "");
   const prizeNoteDirty = prizeNote.trim() !== (t.prize_note ?? "");
@@ -146,6 +219,79 @@ function TournamentRow({ t }: { t: IcmTournament }) {
       </TableCell>
       <TableCell className="num text-right text-xs">
         {t.buyin != null ? `${t.currency ?? "$"}${t.buyin.toFixed(2)}` : "—"}
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1">
+          <Select
+            value={entryType}
+            onValueChange={(v) => {
+              const val = v as "cash" | "ticket";
+              const source = val === "ticket" ? ticketSource : "";
+              setEntryType(val);
+              setTicketSource(source);
+              saveEntryMutation.mutate({ rebuys, entryType: val, source });
+            }}
+          >
+            <SelectTrigger className="h-7 w-[92px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="cash" className="text-xs">
+                Dinheiro
+              </SelectItem>
+              <SelectItem value="ticket" className="text-xs">
+                Ticket
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {entryType === "ticket" ? (
+            <Select
+              value={ticketSource || "none"}
+              onValueChange={(v) => {
+                const source = v === "none" ? "" : v;
+                setTicketSource(source);
+                saveEntryMutation.mutate({ rebuys, entryType, source });
+              }}
+            >
+              <SelectTrigger
+                className="h-7 w-[150px] text-xs"
+                title="Torneio onde você ganhou o ticket usado nesta entrada"
+              >
+                <SelectValue placeholder="Ticket de…" />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value="none" className="text-xs">
+                  Origem não informada
+                </SelectItem>
+                {ticketOptions.map((o) => (
+                  <SelectItem
+                    key={sourceKey(o.site, o.tournament_id)}
+                    value={sourceKey(o.site, o.tournament_id)}
+                    className="text-xs"
+                  >
+                    {fmtUsd(o.value)} · {o.name ?? `#${o.tournament_id}`} ·{" "}
+                    {fmtDateTime(o.won_at).slice(0, 5)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+        </div>
+      </TableCell>
+      <TableCell>
+        <Input
+          type="number"
+          min="0"
+          step="1"
+          value={rebuys}
+          placeholder="0"
+          className="num h-7 w-14 text-xs"
+          title="Quantos re-buys você fez (cada um custa o buy-in)"
+          onChange={(e) => setRebuys(e.target.value)}
+          onBlur={() =>
+            rebuysDirty && saveEntryMutation.mutate({ rebuys, entryType, source: ticketSource })
+          }
+        />
       </TableCell>
       <TableCell className="num text-xs text-muted-foreground" title={t.first_seen ?? undefined}>
         {fmtDateTime(t.first_seen)}
@@ -250,6 +396,10 @@ function TorneiosPage() {
     queryFn: icmApi.tournaments,
   });
   const tournaments = tournamentsQ.data ?? [];
+  const ticketSourcesQ = useQuery({ queryKey: ["ticket-sources"], queryFn: icmApi.ticketSources });
+  const ticketSources = ticketSourcesQ.data ?? [];
+  const cashQ = useQuery({ queryKey: ["stats-cash-summary"], queryFn: statsApi.cashSummary });
+  const cash = cashQ.data;
 
   const [search, setSearch] = useState("");
   const [siteFilter, setSiteFilter] = useState("Todos");
@@ -257,6 +407,7 @@ function TorneiosPage() {
   const [buyinMax, setBuyinMax] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [resultFilter, setResultFilter] = useState<"all" | "pending" | "done">("all");
 
   const sites = useMemo(
     () => Array.from(new Set(tournaments.map((t) => t.site))).sort(),
@@ -274,9 +425,12 @@ function TorneiosPage() {
       const day = t.first_seen?.slice(0, 10);
       if (dateFrom.trim() && (!day || day < dateFrom)) return false;
       if (dateTo.trim() && (!day || day > dateTo)) return false;
+      const hasResult = t.finish_position != null || t.prize != null;
+      if (resultFilter === "pending" && hasResult) return false;
+      if (resultFilter === "done" && !hasResult) return false;
       return true;
     });
-  }, [tournaments, search, siteFilter, buyinMin, buyinMax, dateFrom, dateTo]);
+  }, [tournaments, search, siteFilter, buyinMin, buyinMax, dateFrom, dateTo, resultFilter]);
 
   const clearFilters = () => {
     setSearch("");
@@ -285,9 +439,10 @@ function TorneiosPage() {
     setBuyinMax("");
     setDateFrom("");
     setDateTo("");
+    setResultFilter("all");
   };
 
-  const totalBuyin = tournaments.reduce((a, t) => a + (t.buyin ?? 0), 0);
+  const totalBuyin = tournaments.reduce((a, t) => a + (t.buyin ?? 0) * (1 + t.rebuys), 0);
   const withPayouts = tournaments.filter((t) => t.has_payouts).length;
   const withResult = tournaments.filter((t) => t.finish_position != null).length;
 
@@ -306,7 +461,42 @@ function TorneiosPage() {
         <StatCard label="Torneios importados" value={String(tournaments.length)} />
         <StatCard label="Com premiação configurada" value={String(withPayouts)} tone="profit" />
         <StatCard label="Com colocação registrada" value={String(withResult)} />
-        <StatCard label="Total em buy-ins" value={`$${totalBuyin.toFixed(2)}`} />
+        <StatCard
+          label="Total em buy-ins"
+          value={`$${totalBuyin.toFixed(2)}`}
+          hint="Valor de face, com re-buys"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Bankroll em caixa"
+          value={cash ? fmtUsd(cash.cash_profit) : "—"}
+          tone={cash ? (cash.cash_profit >= 0 ? "profit" : "loss") : "neutral"}
+          hint={
+            cash ? `Prêmios $${cash.cash_in.toFixed(2)} − saídas $${cash.cash_out.toFixed(2)}` : ""
+          }
+        />
+        <StatCard
+          label="Sem resultado lançado"
+          value={cash ? String(cash.pending_results) : "—"}
+          tone={cash && cash.pending_results > 0 ? "loss" : "neutral"}
+          hint={cash ? `$${cash.pending_buyins.toFixed(2)} de buy-in, prêmio 0` : ""}
+        />
+        <StatCard
+          label="Re-buys"
+          value={cash ? String(cash.rebuys) : "—"}
+          hint={cash ? `$${cash.rebuys_cost.toFixed(2)} descontados do caixa` : ""}
+        />
+        <StatCard
+          label="Tickets ganhos"
+          value={cash ? `${cash.tickets_won} · $${cash.tickets_won_value.toFixed(2)}` : "—"}
+          hint={
+            cash
+              ? `${cash.tickets_unlinked} sem vínculo · ${cash.ticket_entries} entradas via ticket`
+              : ""
+          }
+        />
       </div>
 
       <Panel title="Filtros">
@@ -395,6 +585,22 @@ function TorneiosPage() {
               className="num h-8 text-xs"
             />
           </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Resultado</label>
+            <Select
+              value={resultFilter}
+              onValueChange={(v) => setResultFilter(v as "all" | "pending" | "done")}
+            >
+              <SelectTrigger className="h-8 w-[160px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="pending">Sem resultado lançado</SelectItem>
+                <SelectItem value="done">Com resultado</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Button variant="outline" size="sm" className="h-8 text-xs" onClick={clearFilters}>
             Limpar filtros
           </Button>
@@ -412,7 +618,13 @@ function TorneiosPage() {
                 <TableHead>Site</TableHead>
                 <TableHead>ID</TableHead>
                 <TableHead>Nome</TableHead>
-                <TableHead className="text-right">Buy-in</TableHead>
+                <TableHead className="whitespace-nowrap text-right">Buy-in</TableHead>
+                <TableHead title="Como a entrada foi paga — ticket não sai do caixa">
+                  Entrada
+                </TableHead>
+                <TableHead title="Quantidade de re-buys (cada um custa o buy-in)">
+                  Re-buys
+                </TableHead>
                 <TableHead>Início</TableHead>
                 <TableHead>Fim</TableHead>
                 <TableHead className="text-right">Mãos</TableHead>
@@ -427,7 +639,7 @@ function TorneiosPage() {
               {tournamentsQ.isLoading && (
                 <TableRow>
                   <TableCell
-                    colSpan={12}
+                    colSpan={14}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     Carregando…
@@ -437,7 +649,7 @@ function TorneiosPage() {
               {!tournamentsQ.isLoading && filtered.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={12}
+                    colSpan={14}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     Nenhum torneio encontrado com esses filtros.
@@ -445,7 +657,11 @@ function TorneiosPage() {
                 </TableRow>
               )}
               {filtered.map((t) => (
-                <TournamentRow key={`${t.site}::${t.tournament_id}`} t={t} />
+                <TournamentRow
+                  key={`${t.site}::${t.tournament_id}`}
+                  t={t}
+                  ticketSources={ticketSources}
+                />
               ))}
             </TableBody>
           </Table>

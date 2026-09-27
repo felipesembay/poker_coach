@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CoachRouteImport } from './routes/coach'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as EstatisticasRouteImport } from './routes/estatisticas'
+import { Route as EstiloRouteImport } from './routes/estilo'
 import { Route as EstudosRouteImport } from './routes/estudos'
 import { Route as EvolucaoRouteImport } from './routes/evolucao'
 import { Route as FavoritosRouteImport } from './routes/favoritos'
@@ -46,6 +47,11 @@ const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
 const EstatisticasRoute = EstatisticasRouteImport.update({
   id: '/estatisticas',
   path: '/estatisticas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EstiloRoute = EstiloRouteImport.update({
+  id: '/estilo',
+  path: '/estilo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EstudosRoute = EstudosRouteImport.update({
@@ -124,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/coach': typeof CoachRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/estatisticas': typeof EstatisticasRoute
+  '/estilo': typeof EstiloRoute
   '/estudos': typeof EstudosRoute
   '/evolucao': typeof EvolucaoRoute
   '/favoritos': typeof FavoritosRoute
@@ -144,6 +151,7 @@ export interface FileRoutesByTo {
   '/coach': typeof CoachRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/estatisticas': typeof EstatisticasRoute
+  '/estilo': typeof EstiloRoute
   '/estudos': typeof EstudosRoute
   '/evolucao': typeof EvolucaoRoute
   '/favoritos': typeof FavoritosRoute
@@ -164,6 +172,7 @@ export interface FileRoutesById {
   '/coach': typeof CoachRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/estatisticas': typeof EstatisticasRoute
+  '/estilo': typeof EstiloRoute
   '/estudos': typeof EstudosRoute
   '/evolucao': typeof EvolucaoRoute
   '/favoritos': typeof FavoritosRoute
@@ -186,6 +195,7 @@ export interface FileRouteTypes {
     | '/coach'
     | '/configuracoes'
     | '/estatisticas'
+    | '/estilo'
     | '/estudos'
     | '/evolucao'
     | '/favoritos'
@@ -206,6 +216,7 @@ export interface FileRouteTypes {
     | '/coach'
     | '/configuracoes'
     | '/estatisticas'
+    | '/estilo'
     | '/estudos'
     | '/evolucao'
     | '/favoritos'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/coach'
     | '/configuracoes'
     | '/estatisticas'
+    | '/estilo'
     | '/estudos'
     | '/evolucao'
     | '/favoritos'
@@ -246,6 +258,7 @@ export interface RootRouteChildren {
   CoachRoute: typeof CoachRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
   EstatisticasRoute: typeof EstatisticasRoute
+  EstiloRoute: typeof EstiloRoute
   EstudosRoute: typeof EstudosRoute
   EvolucaoRoute: typeof EvolucaoRoute
   FavoritosRoute: typeof FavoritosRoute
@@ -287,6 +300,13 @@ declare module '@tanstack/react-router' {
       path: '/estatisticas'
       fullPath: '/estatisticas'
       preLoaderRoute: typeof EstatisticasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/estilo': {
+      id: '/estilo'
+      path: '/estilo'
+      fullPath: '/estilo'
+      preLoaderRoute: typeof EstiloRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/estudos': {
@@ -411,6 +431,7 @@ const rootRouteChildren: RootRouteChildren = {
   CoachRoute: CoachRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
   EstatisticasRoute: EstatisticasRoute,
+  EstiloRoute: EstiloRoute,
   EstudosRoute: EstudosRoute,
   EvolucaoRoute: EvolucaoRoute,
   FavoritosRoute: FavoritosRoute,

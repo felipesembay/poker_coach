@@ -270,6 +270,22 @@ export type IcmTournament = {
   prize_type: "cash" | "ticket" | null;
   prize_note: string | null;
   has_payouts: boolean;
+  rebuys: number;
+  entry_type: "cash" | "ticket";
+  entry_ticket_site: string | null;
+  entry_ticket_tournament_id: string | null;
+};
+
+// Ticket ganho (prêmio tipo ticket) e onde foi usado — ver
+// poker_coach/api/routers/icm.py::ticket_sources.
+export type TicketSource = {
+  site: string;
+  tournament_id: string;
+  name: string | null;
+  value: number;
+  won_at: string | null;
+  used_by_site: string | null;
+  used_by_tournament_id: string | null;
 };
 
 export type IcmSpot = {
@@ -336,6 +352,21 @@ export const icmApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  setTournamentEntry: (
+    site: string,
+    tournamentId: string,
+    payload: {
+      rebuys: number;
+      entry_type: "cash" | "ticket";
+      ticket_site: string | null;
+      ticket_tournament_id: string | null;
+    },
+  ) =>
+    request(`/api/icm/tournaments/${site}/${tournamentId}/entry`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  ticketSources: () => request<TicketSource[]>("/api/icm/ticket-sources"),
   spots: (params: {
     site: string;
     tournament_id: string;
@@ -688,7 +719,9 @@ export type SessionRow = {
 
 // Evolução de bankroll: BB (sempre disponível) | money/buyins (só
 // torneios com resultado registrado — ver poker_coach/bankroll.py).
-export type BankrollUnit = "bb" | "money" | "buyins";
+// cash = fluxo de caixa real da conta (todos os torneios, re-buys, tickets
+// fora); money = resultado dos torneios com resultado registrado.
+export type BankrollUnit = "bb" | "money" | "buyins" | "cash";
 export type BankrollPoint = { period: string; value: number; cumulative: number; n: number };
 export type Downswing = {
   unit: string;
@@ -713,6 +746,24 @@ export type NormalizedResult = {
   reason?: string | null;
 };
 export type CurrencyCount = { currency: string; tournaments: number };
+export type CashSummary = {
+  cash_profit: number;
+  cash_in: number;
+  cash_out: number;
+  buyins_cash: number;
+  rebuys: number;
+  rebuys_cost: number;
+  tournaments: number;
+  pending_results: number;
+  pending_buyins: number;
+  ticket_entries: number;
+  ticket_entries_value: number;
+  ticket_entries_linked: number;
+  tickets_won: number;
+  tickets_won_value: number;
+  tickets_unlinked: number;
+  tickets_unlinked_value: number;
+};
 
 export const statsApi = {
   overview: () => request<OverviewStats>("/api/stats/overview"),
@@ -728,6 +779,7 @@ export const statsApi = {
   satellites: () => request<SatellitesSummary>("/api/stats/satellites"),
   sessions: () => request<SessionRow[]>("/api/stats/sessions"),
   currencies: () => request<CurrencyCount[]>("/api/stats/currencies"),
+  cashSummary: () => request<CashSummary>("/api/stats/cash-summary"),
   bankrollSeries: (params: { unit: BankrollUnit; currency?: string | undefined }) =>
     request<BankrollPoint[]>(`/api/stats/bankroll-series${qs(params)}`),
   downswing: (params: { unit: BankrollUnit; currency?: string | undefined }) =>
@@ -738,6 +790,82 @@ export const statsApi = {
     basis: "per_100_tournaments" | "per_1000_hands";
     unit: BankrollUnit;
   }) => request<NormalizedResult>(`/api/stats/normalized${qs(params)}`),
+};
+
+// ---------------- Estilo de Jogo ----------------
+// poker_coach/api/routers/play_style.py — toda métrica vem com o
+// denominador (`opps` / `<m>_n`); `pct` null = nenhuma oportunidade.
+
+export type PlayStyleMetricKey =
+  "vpip" | "pfr" | "threebet" | "f3b" | "ats" | "fts" | "cbet" | "fcb";
+
+export type PlayStyleMetricDef = { key: PlayStyleMetricKey; label: string; description: string };
+
+export type PlayStyleTournament = {
+  site: string;
+  tournament_id: string;
+  name: string | null;
+  buyin: number | null;
+  first_ts: string | null;
+  hands: number;
+};
+
+export type PlayStyleOptions = {
+  buyins: number[];
+  tournaments: PlayStyleTournament[];
+  positions: string[];
+  stack_ranges: string[];
+  date_min: string | null;
+  date_max: string | null;
+  metrics: PlayStyleMetricDef[];
+};
+
+export type PlayStyleMetricValue = { pct: number | null; made: number; opps: number };
+
+export type PlayStyleSummary = {
+  hands: number;
+  tournaments: number;
+  date_min: string | null;
+  date_max: string | null;
+  gap: number | null;
+} & Record<PlayStyleMetricKey, PlayStyleMetricValue>;
+
+export type PlayStyleRow = {
+  position: string | null;
+  stack_range: string | null;
+  period: string | null;
+  hands: number;
+  gap: number | null;
+} & Record<PlayStyleMetricKey, number | null> &
+  Record<`${PlayStyleMetricKey}_n`, number>;
+
+export type PlayStyleReport = {
+  summary: PlayStyleSummary;
+  by_stack: PlayStyleRow[];
+  by_position: PlayStyleRow[];
+  evolution: PlayStyleRow[];
+  table: PlayStyleRow[];
+};
+
+export type PlayStylePeriod = "all" | "today" | "7d" | "30d" | "custom";
+export type PlayStyleFreq = "D" | "W" | "M";
+
+export type PlayStyleFilters = {
+  period: PlayStylePeriod;
+  date_from?: string | undefined;
+  date_to?: string | undefined;
+  site?: string | undefined;
+  tournament_id?: string | undefined;
+  buyin?: number | undefined;
+  stack?: string | undefined;
+  position?: string | undefined;
+  freq: PlayStyleFreq;
+};
+
+export const playStyleApi = {
+  options: () => request<PlayStyleOptions>("/api/play-style/options"),
+  report: (params: PlayStyleFilters) =>
+    request<PlayStyleReport>(`/api/play-style/report${qs(params)}`),
 };
 
 // ---------------- Importação ----------------
