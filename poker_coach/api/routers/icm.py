@@ -231,6 +231,29 @@ class IcmSpotOut(BaseModel):
     icm_ev_push: float
     ev_diff: float
     icm_ev_lost: float
+    # Campos crus do spot — o drill de ICM precisa mostrar a mão sem
+    # revelar a resposta (scenario/stack acima são só texto pronto).
+    hero_cards: str = ""
+    position: str = ""
+    n_players: int = 0
+    effective_bb: float = 0.0
+    tournament_name: str | None = None
+
+
+def _spot_out(r: ia.ICMLeakRow, payouts: list[float],
+              tournament_name: str | None = None) -> IcmSpotOut:
+    return IcmSpotOut(
+        site=r.site, hand_id=r.hand_id, tournament_id=r.tournament_id,
+        scenario=f"{r.n_players}-handed, {r.position} abre",
+        category=_category(r.n_players, payouts),  # type: ignore[arg-type]
+        stack=f"{r.effective_bb} BB", risk=_risk_bucket(r.risk_premium_pct),
+        risk_premium_pct=r.risk_premium_pct,
+        hero_decision=r.hero_decision, icm_decision=r.icm_decision,  # type: ignore[arg-type]
+        icm_ev_fold=r.icm_ev_fold, icm_ev_push=r.icm_ev_push,
+        ev_diff=round(r.icm_ev_push - r.icm_ev_fold, 2), icm_ev_lost=r.icm_ev_lost,
+        hero_cards=r.hero_cards, position=r.position, n_players=r.n_players,
+        effective_bb=r.effective_bb, tournament_name=tournament_name,
+    )
 
 
 class IcmSummaryOut(BaseModel):
@@ -260,21 +283,43 @@ def icm_spots(site: str = Query(...), tournament_id: str = Query(...),
                                  "(PUT /api/icm/tournaments/{site}/{tournament_id}/payouts primeiro).")
         rows = ia.analyze_icm_tournament(conn, site, tournament_id, payouts,
                                           max_table_size=max_table_size)
-        out = []
-        for r in rows:
-            out.append(IcmSpotOut(
-                site=r.site, hand_id=r.hand_id, tournament_id=r.tournament_id,
-                scenario=f"{r.n_players}-handed, {r.position} abre",
-                category=_category(r.n_players, payouts),  # type: ignore[arg-type]
-                stack=f"{r.effective_bb} BB", risk=_risk_bucket(r.risk_premium_pct),
-                risk_premium_pct=r.risk_premium_pct,
-                hero_decision=r.hero_decision, icm_decision=r.icm_decision,
-                icm_ev_fold=r.icm_ev_fold, icm_ev_push=r.icm_ev_push,
-                ev_diff=round(r.icm_ev_push - r.icm_ev_fold, 2), icm_ev_lost=r.icm_ev_lost,
-            ))
+        out = [_spot_out(r, payouts) for r in rows]
         s = ia.summarize_icm(rows)
         return IcmSummaryOut(spots=s["spots"], leak_spots=s["leak_spots"],
                               total_ev_lost=s["total_ev_lost"], rows=out)
+    finally:
+        conn.close()
+
+
+@router.get("/trainer/spots", response_model=list[IcmSpotOut])
+def icm_trainer_spots(site: str | None = Query(None), tournament_id: str | None = Query(None),
+                      max_table_size: int = Query(9, ge=2, le=9),
+                      confirmed: bool = Query(False)):
+    """Spots pro drill de ICM (botão "Treinar"). Com site+tournament_id,
+    só esse torneio; sem, junta todos os torneios com premiação salva.
+    Mesma exigência de confirmação de `/spots` — o motor só vale pra
+    mesa final/bolha, e a hand history não prova isso sozinha."""
+    if not confirmed:
+        raise HTTPException(400, "Confirmação obrigatória (confirmed=true) — ver /api/icm/spots.")
+    conn = _conn()
+    try:
+        if site and tournament_id:
+            targets = conn.execute(
+                "SELECT site, tournament_id, name FROM tournaments WHERE site=? AND tournament_id=?",
+                (site, tournament_id)).fetchall() or [(site, tournament_id, None)]
+        else:
+            targets = conn.execute(
+                """SELECT t.site, t.tournament_id, t.name FROM tournaments t
+                   WHERE EXISTS(SELECT 1 FROM payouts p WHERE p.site=t.site
+                                AND p.tournament_id=t.tournament_id)""").fetchall()
+        out: list[IcmSpotOut] = []
+        for s, tid, name in targets:
+            payouts = dbm.get_payouts(conn, s, tid)
+            if not payouts:
+                continue
+            rows = ia.analyze_icm_tournament(conn, s, tid, payouts, max_table_size=max_table_size)
+            out.extend(_spot_out(r, payouts, name) for r in rows)
+        return out
     finally:
         conn.close()
 

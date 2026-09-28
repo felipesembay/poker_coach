@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Coins, Plus, Trash2 } from "lucide-react";
+import { Coins, Plus, Search, Trash2 } from "lucide-react";
 
+import { IcmTrainerDialog } from "@/components/icm-trainer";
 import { Money, PageHeader, Panel, StatCard } from "@/components/lab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -138,8 +139,33 @@ function IcmPage() {
     queryFn: icmApi.tournaments,
   });
 
-  const tournaments = tournamentsQ.data ?? [];
+  const tournaments = useMemo(() => tournamentsQ.data ?? [], [tournamentsQ.data]);
   const selectedT = tournaments.find((t) => `${t.site}::${t.tournament_id}` === selectedKey);
+
+  // Filtro do seletor: ID do torneio (trecho) ou nome (começo de qualquer
+  // palavra conta — "sunday" acha "The Sunday Carnival"). O torneio já
+  // selecionado sempre fica na lista pro Select não perder o rótulo.
+  const [tournamentFilter, setTournamentFilter] = useState("");
+  const filteredTournaments = useMemo(() => {
+    const q = tournamentFilter.trim().toLowerCase().replace(/^#/, "");
+    if (!q) return tournaments;
+    return tournaments.filter((t) => {
+      if (`${t.site}::${t.tournament_id}` === selectedKey) return true;
+      if (t.tournament_id.includes(q)) return true;
+      const name = (t.name ?? "").toLowerCase();
+      return name.startsWith(q) || name.split(/[\s:\-–—]+/).some((w) => w.startsWith(q));
+    });
+  }, [tournaments, tournamentFilter, selectedKey]);
+
+  // ID digitado por inteiro = seleciona direto, sem precisar abrir a lista.
+  useEffect(() => {
+    const q = tournamentFilter.trim().replace(/^#/, "");
+    if (!q) return;
+    const exact = tournaments.filter((t) => t.tournament_id === q);
+    if (exact.length === 1) setSelectedKey(`${exact[0]!.site}::${exact[0]!.tournament_id}`);
+  }, [tournamentFilter, tournaments]);
+
+  const [trainerOpen, setTrainerOpen] = useState(false);
 
   const spotsQ = useQuery({
     queryKey: ["icm-spots", selectedKey],
@@ -259,15 +285,38 @@ function IcmPage() {
             : "Selecione um torneio com premiação configurada"
         }
         actions={
-          <Button size="sm">
+          <Button size="sm" onClick={() => setTrainerOpen(true)}>
             <Coins className="mr-1.5 size-3.5" /> Treinar
           </Button>
+        }
+      />
+
+      <IcmTrainerDialog
+        open={trainerOpen}
+        onOpenChange={setTrainerOpen}
+        tournament={
+          selectedT?.has_payouts
+            ? {
+                site: selectedT.site,
+                tournament_id: selectedT.tournament_id,
+                label: selectedT.name ?? `#${selectedT.tournament_id}`,
+              }
+            : null
         }
       />
 
       {/* Tournament selector */}
       <Panel title="Torneio">
         <div className="flex flex-wrap items-center gap-3 p-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={tournamentFilter}
+              onChange={(e) => setTournamentFilter(e.target.value)}
+              placeholder="Filtrar por ID ou nome…"
+              className="h-9 w-[220px] pl-8 text-sm"
+            />
+          </div>
           <Select value={selectedKey} onValueChange={setSelectedKey}>
             <SelectTrigger className="h-9 w-[320px] text-sm">
               <SelectValue placeholder="Selecione um torneio…" />
@@ -278,17 +327,27 @@ function IcmPage() {
                   Carregando…
                 </SelectItem>
               )}
-              {tournaments.map((t) => (
+              {!tournamentsQ.isLoading && filteredTournaments.length === 0 && (
+                <SelectItem value="__empty" disabled>
+                  Nenhum torneio com "{tournamentFilter.trim()}"
+                </SelectItem>
+              )}
+              {filteredTournaments.map((t) => (
                 <SelectItem
                   key={`${t.site}::${t.tournament_id}`}
                   value={`${t.site}::${t.tournament_id}`}
                 >
-                  {t.name ?? `${t.site} #${t.tournament_id}`}
+                  {t.name ? `${t.name} · #${t.tournament_id}` : `${t.site} #${t.tournament_id}`}
                   {!t.has_payouts && " — sem premiação"}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {tournamentFilter.trim() && (
+            <span className="text-xs text-muted-foreground">
+              {filteredTournaments.length} de {tournaments.length} torneios
+            </span>
+          )}
           {selectedT && !selectedT.has_payouts && (
             <p className="text-xs text-loss">
               Este torneio não tem premiação salva. Configure os prêmios para calcular o ICM.

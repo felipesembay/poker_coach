@@ -303,6 +303,11 @@ export type IcmSpot = {
   icm_ev_push: number;
   ev_diff: number;
   icm_ev_lost: number;
+  hero_cards: string;
+  position: string;
+  n_players: number;
+  effective_bb: number;
+  tournament_name: string | null;
 };
 
 export type IcmSummary = {
@@ -373,6 +378,9 @@ export const icmApi = {
     confirmed: boolean;
     max_table_size?: number;
   }) => request<IcmSummary>(`/api/icm/spots${qs(params)}`),
+  // Sem site/tournament_id = todos os torneios com premiação salva.
+  trainerSpots: (params: { site?: string; tournament_id?: string; confirmed: boolean }) =>
+    request<IcmSpot[]>(`/api/icm/trainer/spots${qs(params)}`),
   hand: (site: string, handId: string, confirmed: boolean) =>
     request<IcmHand>(`/api/icm/hand/${site}/${handId}${qs({ confirmed })}`),
 };
